@@ -1045,9 +1045,30 @@ class ARStudioEngine:
                         dst2 = (le.x * fw, le.y * fh)
 
             # -----------------------------------------------------------------
-            # 3. Mouth Items: Keys "9" & "10" (hair, mask)
+            # 3. Hair Wigs & Hairstyles: Keys "9" & "10" (hair) -> Anchored to Temples & Forehead
             # -----------------------------------------------------------------
-            elif "9" in kps and "10" in kps:
+            elif slot == "hair" and "9" in kps and "10" in kps:
+                src1 = kps["9"]
+                src2 = kps["10"]
+                # In FaceMesh: Landmark 127 is Right Temple, 356 is Left Temple (temple hairline level)
+                # This positions the hair naturally on top of the head rather than over the mouth
+                if face_lmks:
+                    rt = get_lmk(face_lmks, 127)  # Right Temple
+                    lt = get_lmk(face_lmks, 356)  # Left Temple
+                    if rt and lt:
+                        dst1 = (rt.x * fw, rt.y * fh)
+                        dst2 = (lt.x * fw, lt.y * fh)
+                elif pose_lmks:
+                    lear = get_lmk(pose_lmks, 7)  # Left Ear
+                    rear = get_lmk(pose_lmks, 8)  # Right Ear
+                    if lear and rear and (getattr(lear, 'visibility', 1.0) > 0.25):
+                        dst1 = (rear.x * fw, rear.y * fh)
+                        dst2 = (lear.x * fw, lear.y * fh)
+
+            # -----------------------------------------------------------------
+            # 4. Mask Items: Keys "9" & "10" (mask) -> Anchored to Mouth
+            # -----------------------------------------------------------------
+            elif slot == "mask" and "9" in kps and "10" in kps:
                 src1 = kps["9"]
                 src2 = kps["10"]
                 # 9: Mouth Left, 10: Mouth Right
