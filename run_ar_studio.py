@@ -244,7 +244,7 @@ class ARStudioEngine:
         self.prev_pinching = False
         self.last_reach_time = 0
         self.last_pinch_time = 0
-        self.ripples = []  # List of [x, y, radius, alpha]
+        self.just_pinched = False
 
         # 3-Wall Virtual Dressing Room & Continuous Head/Gaze Yaw Tracking
         self.smooth_yaw = 0.0          # Normalized continuous yaw [-1.0: Left Wall, 0.0: Center Wall, +1.0: Right Wall]
@@ -1167,19 +1167,13 @@ class ARStudioEngine:
             is_hover = (sx1 - pad <= hx <= sx2 + pad and sy1 - pad <= hy <= sy2 + pad)
             hs["_was_hover"] = is_hover
 
-            # Fallback clickable region for mouse click
+            # Fallback clickable region for mouse click and air pinch
             cur_c = cur_cat
             cur_it = cat_item
             self.clickable_regions.append({
                 "rect": (max(0, sx1), max(0, sy1), min(fw, sx2), min(fh, sy2)),
                 "action": lambda c=cur_c, it=cur_it: self.wear_item(c, it)
             })
-
-            # AIR PINCH GESTURE: Grab item from wall to wear/remove it
-            if is_hover and is_pinching:
-                if (now - self.last_pinch_time) > 0.55:
-                    self.last_pinch_time = now
-                    self.wear_item(cur_c, cur_it)
 
             # ONLY draw visual highlight when the hand is ACTUALLY HOVERING over the item on the wall!
             # When not hovered, the wall is 100% clean and transparent!
@@ -1405,18 +1399,6 @@ class ARStudioEngine:
         fh, fw = frame.shape[:2]
         now = time.time()
 
-        # Update & draw ripple click effects with zero-copy fast rendering
-        active_ripples = []
-        for rip in self.ripples:
-            rx, ry, radius, alpha = rip
-            if alpha > 0.05 and radius < 75:
-                b_val = int(0 * alpha)
-                g_val = int(255 * alpha)
-                r_val = int(180 * alpha)
-                cv2.circle(frame, (int(rx), int(ry)), int(radius), (b_val, g_val, r_val), 2, cv2.LINE_AA)
-                active_ripples.append([rx, ry, radius + 4, alpha * 0.85])
-        self.ripples = active_ripples
-
         if not hand_lmks_list or not self.enable_gestures:
             if now - self.hand_cursor.get("last_seen", 0) > 0.5:
                 self.hand_cursor["is_visible"] = False
@@ -1442,17 +1424,14 @@ class ARStudioEngine:
                 if idx in [4, 8, 12, 16, 20]:  # Fingertips
                     if idx == 8:
                         # Index tip: Highlighted in bright gold/cyan
-                        cv2.circle(frame, pt, 7, (0, 255, 255), -1, cv2.LINE_AA)
-                        cv2.circle(frame, pt, 9, (0, 200, 255), 2, cv2.LINE_AA)
+                        cv2.circle(frame, pt, 6, (0, 255, 255), -1, cv2.LINE_AA)
                     elif idx == 4:
                         # Thumb tip: Bright cyan
-                        cv2.circle(frame, pt, 6, (255, 200, 0), -1, cv2.LINE_AA)
-                        cv2.circle(frame, pt, 8, (255, 255, 0), 2, cv2.LINE_AA)
+                        cv2.circle(frame, pt, 5, (255, 200, 0), -1, cv2.LINE_AA)
                     else:
-                        cv2.circle(frame, pt, 5, (255, 0, 180), -1, cv2.LINE_AA)
+                        cv2.circle(frame, pt, 4, (255, 0, 180), -1, cv2.LINE_AA)
                 else:
-                    cv2.circle(frame, pt, 4, (0, 229, 255), -1, cv2.LINE_AA)
-                    cv2.circle(frame, pt, 2, (255, 255, 255), -1, cv2.LINE_AA)
+                    cv2.circle(frame, pt, 3, (0, 229, 255), -1, cv2.LINE_AA)
 
         # 2. Select primary interactive hand (prioritize pinching hand)
         primary_hand = hand_lmks_list[0]
@@ -1474,18 +1453,29 @@ class ARStudioEngine:
         pt10 = pts[10]  # Middle PIP
         pt12 = pts[12]  # Middle tip
 
+        # Ultra-Fast 3D Euclidean Contact Distance between Thumb and Index Tips
+        lm4 = primary_hand[4]
+        lm8 = primary_hand[8]
+        dx_3d = lm4.x - lm8.x
+        dy_3d = lm4.y - lm8.y
+        dz_3d = getattr(lm4, 'z', 0.0) - getattr(lm8, 'z', 0.0)
+        dist_3d = math.sqrt(dx_3d * dx_3d + dy_3d * dy_3d + dz_3d * dz_3d)
+
         hand_scale = max(20.0, float(np.hypot(pt0[0] - pt9[0], pt0[1] - pt9[1])))
         pinch_dist = float(np.hypot(pt4[0] - pt8[0], pt4[1] - pt8[1]))
         pinch_ratio = pinch_dist / hand_scale
+
+        # Ultra-responsive contact detection (fast 3D + 2D hybrid threshold)
+        is_contact = (dist_3d < 0.065) or (pinch_dist < 46) or (pinch_ratio < 0.32)
 
         # Gesture recognition with Schmitt-Trigger Hysteresis (prevents pinch jitter / flickering)
         was_pinching = self.hand_cursor.get("is_pinching", False)
         if was_pinching:
             # Releasing pinch requires clear deliberate finger separation
-            is_pinching = (pinch_ratio < 0.35) and (pinch_dist < 54)
+            is_pinching = (dist_3d < 0.085) or (pinch_dist < 58) or (pinch_ratio < 0.40)
         else:
-            # Engaging pinch requires clear contact / pinch
-            is_pinching = (pinch_ratio < 0.26) or (pinch_dist < 38)
+            # Engaging pinch: instant trigger on touch
+            is_pinching = is_contact
 
         # Pointing: Index extended & middle curled
         is_pointing = (pt8[1] < pt6[1]) and (pt12[1] > pt10[1] - 8)
@@ -1501,17 +1491,17 @@ class ARStudioEngine:
         else:
             prev_x, prev_y = self.hand_cursor["x"], self.hand_cursor["y"]
             move_dist = math.hypot(raw_cx - prev_x, raw_cy - prev_y)
-            if move_dist < 3.5:
+            if move_dist < 3.0:
                 # Sub-pixel hand tremor: lock cursor steady
                 cx, cy = prev_x, prev_y
             elif move_dist < 22.0:
-                # Fine adjustments / hovering over items: heavy cinematic smoothing
-                cx = int(0.78 * prev_x + 0.22 * raw_cx)
-                cy = int(0.78 * prev_y + 0.22 * raw_cy)
+                # Fine adjustments / hovering over items: smooth glide
+                cx = int(0.75 * prev_x + 0.25 * raw_cx)
+                cy = int(0.75 * prev_y + 0.25 * raw_cy)
             else:
                 # Fast intentional hand motion: responsive tracking
-                cx = int(0.50 * prev_x + 0.50 * raw_cx)
-                cy = int(0.50 * prev_y + 0.50 * raw_cy)
+                cx = int(0.40 * prev_x + 0.60 * raw_cx)
+                cy = int(0.40 * prev_y + 0.60 * raw_cy)
 
         self.hand_cursor["x"] = cx
         self.hand_cursor["y"] = cy
@@ -1520,10 +1510,10 @@ class ARStudioEngine:
         self.hand_cursor["is_pinching"] = is_pinching
         self.hand_cursor["pinch_ratio"] = pinch_ratio
 
-        # 3. Air Pinch: Click / Grab item
-        if is_pinching and not self.prev_pinching and (now - self.last_pinch_time > 0.45):
+        # 3. Air Pinch: Instant Click & Grab item (Rising Edge Trigger - Single Frame Activation)
+        just_pinched = is_pinching and not self.prev_pinching and (now - self.last_pinch_time > 0.18)
+        if just_pinched:
             self.last_pinch_time = now
-            self.ripples.append([cx, cy, 12, 1.0])
             for reg in self.clickable_regions:
                 rx1, ry1, rx2, ry2 = reg["rect"]
                 if rx1 <= cx <= rx2 and ry1 <= cy <= ry2:
@@ -1532,29 +1522,18 @@ class ARStudioEngine:
 
         self.prev_pinching = is_pinching
 
-        # 5. Render Sci-Fi Hand Cursor HUD
+        # 4. Render Clean Minimalist Micro-Pointer (Zero Rings, Zero Clutter)
         cursor_col = (0, 255, 128) if is_pinching else ((0, 229, 255) if is_pointing else (255, 200, 0))
-        cur_radius = 12 if is_pinching else (18 if is_pointing else 16)
 
-        # Outer ring
-        cv2.circle(frame, (cx, cy), cur_radius, cursor_col, 2, cv2.LINE_AA)
-        # Inner dot
-        cv2.circle(frame, (cx, cy), 3, (255, 255, 255), -1, cv2.LINE_AA)
-        
-        # Crosshairs
-        tick_len = 7
-        cv2.line(frame, (cx - cur_radius - tick_len, cy), (cx - cur_radius + 2, cy), cursor_col, 1, cv2.LINE_AA)
-        cv2.line(frame, (cx + cur_radius - 2, cy), (cx + cur_radius + tick_len, cy), cursor_col, 1, cv2.LINE_AA)
-        cv2.line(frame, (cx, cy - cur_radius - tick_len), (cx, cy - cur_radius + 2), cursor_col, 1, cv2.LINE_AA)
-        cv2.line(frame, (cx, cy + cur_radius - 2), (cx, cy + cur_radius + tick_len), cursor_col, 1, cv2.LINE_AA)
-
-        # Indicator text / pinch visual feedback
         if is_pinching:
+            # Elegant luminous connection beam between contact tips
             cv2.line(frame, pt4, pt8, (0, 255, 128), 3, cv2.LINE_AA)
-            cv2.circle(frame, (cx, cy), cur_radius + 8, (0, 255, 128), 1, cv2.LINE_AA)
-            cv2.putText(frame, "PINCH / CLICK", (cx + 20, cy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 128), 1, cv2.LINE_AA)
-        elif is_pointing:
-            cv2.putText(frame, "POINT", (cx + 20, cy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 229, 255), 1, cv2.LINE_AA)
+            cv2.circle(frame, (cx, cy), 6, (0, 255, 128), -1, cv2.LINE_AA)
+            cv2.circle(frame, (cx, cy), 8, (255, 255, 255), 1, cv2.LINE_AA)
+        else:
+            # Clean sleek micro-reticle
+            cv2.circle(frame, (cx, cy), 4, cursor_col, -1, cv2.LINE_AA)
+            cv2.circle(frame, (cx, cy), 6, (255, 255, 255), 1, cv2.LINE_AA)
 
     # =========================================================================
     # Main Application Loop
