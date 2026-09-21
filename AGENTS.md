@@ -195,6 +195,8 @@ When modifying or generating new features for this codebase, adhere to these ori
 | `[B]` | **Toggle Background** | Cycles: 3-Wall Room $\rightarrow$ Smart Blur $\rightarrow$ Raw Camera Feed |
 | `[` / `]` | **Tune Cutout Strictness** | `[` broadens segmentation, `]` strictly clips background furniture |
 | `[G]` | **Toggle Gestures** | Enables / disables hand landmark tracking & air gestures |
+| `[M]` | **Audio Carousel** | Opens / closes the holographic audio carousel dock |
+| `[+]` / `[-]` | **Volume Steps** | Adjusts sound volume up / down in 10% discrete increments |
 | `[C]` | **Toggle Camera** | Switches between Local Laptop Webcam and IP Webcam |
 | `[1]` - `[8]` | **Quick Shelf Access** | Opens category shelves and navigates to corresponding wall |
 | `[S]` | **Take Snapshot** | Captures high-res photo with watermark into `snapshots/` |
@@ -273,4 +275,18 @@ When modifying or generating new features for this codebase, adhere to these ori
 * **المشكلة:** عند ارتداء تراكيب الشعر (`hair`)، كانت تظهر هابطة فوق الأنف والفم بدلاً من الرأس.
 * **السبب التقني:** كان الكود يصنف الشعر تحت فئة "عناصر الفم" (Mouth Items) بالخطأ مع الكمامات (`mask`) ويربط نقاط التكست 9 و 10 بنقاط زوايا الفم (Landmarks 61 و 291).
 * **الحل المنفذ:** فصل تراكيب الشعر تماماً عن الكمامات وربط نقاط الارتكاز بالصدغين وأعلى الأذنين (Landmarks 127 و 356) في FaceMesh (أو الأذنين 7 و 8 في Pose)، مما جعل الشعر يستقر تلقائياً في موضعه الطبيعي أعلى الرأس وفوق الجبين.
+
+### 8.9 نظام الصوت الهولوغرافي التفاعلي بالكامل عبر إيماءات الجسد (Holographic Audio & Gestures Engine)
+* **الطلب والمناقشة:** رغبة المستخدم في إضافة نظام صوتي متكامل يتم التحكم به دون لمس الفأرة إطلاقاً:
+  1. فتح الكف كاملاً يُظهر قائمة الأصوات أفقياً.
+  2. الالتفات بالرأس ينتقل بين المقاطع تماماً كالانتقال بين الغرف.
+  3. فتح الكف مرة أخرى يثبت الاختيار ويشغل الصوت ويغلق القائمة.
+  4. وضع السبابة على الفم يوقف الصوت تماماً (Complete Stop).
+  5. ملامسة السبابة للأذن اليمنى ترفع الصوت 10% لكل لمسة، وملامسة الأذن اليسرى تخفضه 10%.
+* **الحل المنفذ:**
+  - **محرك صوتي عالي الأداء وغير معطل للمرآة (`ARAudioManager`):** استخدام مكتبة `sounddevice` مع `scipy.io.wavfile` في تدفق حلقي خلفي (Background Audio Callback Thread) مع حماية ضد قفل الخيوط (`threading.Lock`) وتحكم ناعم بالصوت وتوليد 4 مقاطع موسيقية تصويرية في مجلد `things_assets/sounds/` (بوتيك فاخر، عود شرقي، ألحان زفاف، إيقاعات أزياء).
+  - **كشف كف اليد المفتوح (5-Fingers Open Palm Detection):** فحص امتداد الأصابع الخمسة جميعها مقارنة بمفاصل السلاميات وقاعدة الكف مع عتبة إخماد نبضات (`0.75s Debounce`) تمنع التكرار العرضي.
+  - **التنقل برأس المستخدم (Head Yaw Navigation Sync):** ربط المتغير المنعم لزاوية الرأس `self.smooth_yaw` (الممتد من $-0.55$ إلى $+0.55$) لتحديد بطاقات الصوت الأفقية تلقائياً وبشكل سينمائي انسيابي.
+  - **إيماءة السكوت التام عبر الشفاه (Shhh Gesture Stop):** حساب المسافة الإقليدية بين طرف السبابة (Landmark 8) ومركز الشفتين (FaceMesh Landmarks 13 و 14) بعتبة $D < 45\text{px}$ لإيقاف الصوت كلياً (`audio_manager.stop()`) مع هالة ضوئية بنفسجية وتنبيه فوري.
+  - **التحكم بالصوت عبر لمس الأذنين (Ear Touch Step Volume):** ربط أذن الوجه اليمنى (Landmark 234 / Pose 8) لرفع الصوت $+10\%$ لكل لمسة مفردة، وأذن الوجه اليسرى (Landmark 454 / Pose 7) لخفض الصوت $-10\%$ لكل لمسة مفردة، مع إظهار مؤشر مستوى الصوت النيوني الحي (HUD Neon Volume Meter) وتثبيت خطوة الـ 10% بدقة دون قفزات عشوائية.
 

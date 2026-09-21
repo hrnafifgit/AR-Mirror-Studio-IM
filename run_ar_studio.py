@@ -20,10 +20,19 @@ import time
 import math
 import json
 import argparse
+import threading
 from pathlib import Path
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+
+# Audio playback support via sounddevice & scipy
+try:
+    import sounddevice as sd
+    from scipy.io import wavfile
+    HAS_AUDIO = True
+except ImportError:
+    HAS_AUDIO = False
 
 # Arabic text shaping
 try:
@@ -53,6 +62,7 @@ SNAPSHOTS_DIR = BASE_DIR / "snapshots"
 SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
 CATALOG_PATH = BASE_DIR / "things_assets" / "catalog.json"
 THINGS_DIR = BASE_DIR / "things_assets"
+SOUNDS_DIR = THINGS_DIR / "sounds"
 MODELS_DIR = BASE_DIR / "models"
 
 # Fonts
@@ -110,6 +120,135 @@ HAND_CONNECTIONS = [
     (13, 17), (17, 18), (18, 19), (19, 20),# Pinky
     (0, 17)                                # Palm base
 ]
+
+
+class ARAudioManager:
+    """
+    Real-Time Non-blocking AR Audio Engine using sounddevice & scipy.
+    Supports dynamic looping, single-tap volume steps (+/- 10%),
+    and instant thread-safe stop().
+    """
+    def __init__(self, sounds_dir):
+        self.sounds_dir = Path(sounds_dir)
+        self.tracks = []
+        self.current_track_idx = 0
+        self.volume = 0.70  # Default 70%
+        self.is_playing = False
+        self.stream = None
+        self.audio_data = None
+        self.play_pos = 0
+        self.sr = 44100
+        self.lock = threading.Lock()
+        self.active_track_name = ""
+        self.active_track_icon = "🎵"
+        self._load_tracks()
+
+    def _load_tracks(self):
+        self.tracks = []
+        if not self.sounds_dir.exists():
+            return
+        wav_files = sorted(list(self.sounds_dir.glob("*.wav")))
+        meta = {
+            "luxury_lounge.wav": {"title": "بوتيك فاخر (Luxury Lounge)", "icon": "🎻"},
+            "oriental_oud.wav": {"title": "عود شرقي أصيل (Oriental Oud)", "icon": "🪕"},
+            "wedding_melody.wav": {"title": "نغمات الزفاف (Wedding Melody)", "icon": "🎹"},
+            "fashion_beats.wav": {"title": "إيقاع عرض الأزياء (Runway Beats)", "icon": "🎧"}
+        }
+        for f in wav_files:
+            m = meta.get(f.name, {"title": f.stem.replace("_", " ").title(), "icon": "🎵"})
+            self.tracks.append({
+                "path": f,
+                "name": f.name,
+                "title": m["title"],
+                "icon": m["icon"]
+            })
+
+    def _audio_callback(self, outdata, frames, time_info, status):
+        with self.lock:
+            if not self.is_playing or self.audio_data is None or len(self.audio_data) == 0:
+                outdata.fill(0)
+                return
+
+            chunk_len = len(self.audio_data)
+            end_pos = self.play_pos + frames
+
+            if end_pos < chunk_len:
+                chunk = self.audio_data[self.play_pos:end_pos]
+                self.play_pos = end_pos
+            else:
+                part1 = self.audio_data[self.play_pos:]
+                needed = frames - len(part1)
+                wrapped_end = needed % chunk_len
+                part2 = self.audio_data[:wrapped_end]
+                reps = needed // chunk_len
+                if reps > 0:
+                    mid = np.tile(self.audio_data, reps)
+                    chunk = np.concatenate([part1, mid, part2])
+                else:
+                    chunk = np.concatenate([part1, part2])
+                self.play_pos = wrapped_end
+
+            scaled = chunk * self.volume
+            if scaled.ndim == 1:
+                scaled = scaled[:, np.newaxis]
+            if outdata.shape[1] > scaled.shape[1]:
+                scaled = np.repeat(scaled, outdata.shape[1], axis=1)
+            outdata[:] = scaled
+
+    def play_track(self, track_idx):
+        if not HAS_AUDIO or not self.tracks or track_idx < 0 or track_idx >= len(self.tracks):
+            return
+        track = self.tracks[track_idx]
+        self.current_track_idx = track_idx
+        self.active_track_name = track["title"]
+        self.active_track_icon = track["icon"]
+
+        try:
+            sr, data = wavfile.read(str(track["path"]))
+            if data.dtype == np.int16:
+                data = data.astype(np.float32) / 32768.0
+            elif data.dtype == np.int32:
+                data = data.astype(np.float32) / 2147483648.0
+            elif data.dtype == np.uint8:
+                data = (data.astype(np.float32) - 128.0) / 128.0
+
+            with self.lock:
+                self.audio_data = data
+                self.sr = sr
+                self.play_pos = 0
+                self.is_playing = True
+
+            if self.stream is not None:
+                try:
+                    self.stream.stop()
+                    self.stream.close()
+                except Exception:
+                    pass
+
+            channels = 1 if data.ndim == 1 else data.shape[1]
+            self.stream = sd.OutputStream(
+                samplerate=sr,
+                channels=channels,
+                callback=self._audio_callback,
+                blocksize=1024
+            )
+            self.stream.start()
+        except Exception as e:
+            print(f"[!] Audio playback error: {e}")
+
+    def stop(self):
+        with self.lock:
+            self.is_playing = False
+            self.play_pos = 0
+        if self.stream is not None:
+            try:
+                self.stream.stop()
+            except Exception:
+                pass
+
+    def adjust_volume(self, delta):
+        self.volume = float(np.clip(round(self.volume + delta, 2), 0.0, 1.0))
+        return int(self.volume * 100)
 
 
 class OneEuroFilter:
@@ -245,6 +384,16 @@ class ARStudioEngine:
         self.last_reach_time = 0
         self.last_pinch_time = 0
         self.just_pinched = False
+
+        # Smart AR Audio & Gesture Control
+        self.audio_manager = ARAudioManager(SOUNDS_DIR)
+        self.show_audio_menu = False
+        self.selected_sound_idx = 0
+        self.last_palm_time = 0
+        self.prev_palm_state = False
+        self.last_vol_time = 0
+        self.volume_hud_timer = 0.0
+        self.last_mute_time = 0
 
         # 3-Wall Virtual Dressing Room & Continuous Head/Gaze Yaw Tracking
         self.smooth_yaw = 0.0          # Normalized continuous yaw [-1.0: Left Wall, 0.0: Center Wall, +1.0: Right Wall]
@@ -1381,14 +1530,89 @@ class ARStudioEngine:
         # ---------------------------------------------------------------------
         # 6. Air Gesture Guidance Bar (Bottom Floating Hint)
         # ---------------------------------------------------------------------
-        if self.enable_gestures and not (self.worn_items.get("suite") or self.worn_items.get("maried")):
-            hint_w = 740
+        if self.enable_gestures and not (self.worn_items.get("suite") or self.worn_items.get("maried")) and not self.show_audio_menu:
+            hint_w = 780
             hint_h = 32
             hint_x = (fw - hint_w) // 2
             hint_y = fh - 45
             self.draw_glass_box(frame, hint_x, hint_y, hint_w, hint_h, bg_rgba=(10, 14, 24, 200), border_bgr=(0, 229, 255), border_thick=1)
-            hint_str = "إيماءات الجدار: اقرص بالهواء بالسبابة والإبهام عند أي قطعة لارتدائها أو نزعها مباشرة | حرّك يدك للتأشير"
-            pil_texts.append((hint_str, (hint_x + 16, hint_y + 7), FONT_SHELF_SUB, (200, 240, 255)))
+            hint_str = "إيماءات: اقرص لاختيار الملابس | افتح كفك لقائمة الأصوات 🎵🖐️ | سبابتك على فمك لإيقاف الصوت 🤫"
+            pil_texts.append((hint_str, (hint_x + 14, hint_y + 7), FONT_SHELF_SUB, (200, 240, 255)))
+
+        # ---------------------------------------------------------------------
+        # 7. Holographic Floating Audio Carousel (Activated via Open Palm)
+        # ---------------------------------------------------------------------
+        if self.show_audio_menu and self.audio_manager.tracks:
+            c_w = 880
+            c_h = 115
+            c_x = (fw - c_w) // 2
+            c_y = fh - 145
+            self.draw_glass_box(frame, c_x, c_y, c_w, c_h, bg_rgba=(12, 18, 34, 245), border_bgr=(0, 229, 255), border_thick=2)
+            pil_texts.append(("🎵 قائمة المقاطع الصوتية (التفت برأسك للاختيار | افتح كفك للتشغيل والإغلاق 🖐️)", (c_x + 22, c_y + 8), FONT_SHELF_TITLE, (0, 229, 255)))
+
+            num_tracks = len(self.audio_manager.tracks)
+            card_w = (c_w - 40 - (num_tracks - 1) * 12) // num_tracks
+            card_h = 64
+            card_y = c_y + 38
+
+            for idx, trk in enumerate(self.audio_manager.tracks):
+                card_x = c_x + 20 + idx * (card_w + 12)
+                is_selected = (idx == self.selected_sound_idx)
+                is_playing_this = (self.audio_manager.is_playing and self.audio_manager.current_track_idx == idx)
+
+                if is_playing_this:
+                    border_c = (0, 255, 128)
+                    bg_c = (20, 50, 36, 235)
+                elif is_selected:
+                    border_c = (0, 229, 255)
+                    bg_c = (28, 48, 80, 235)
+                else:
+                    border_c = (60, 80, 110)
+                    bg_c = (16, 22, 38, 210)
+
+                self.draw_glass_box(frame, card_x, card_y, card_w, card_h, bg_rgba=bg_c, border_bgr=border_c, border_thick=2 if is_selected else 1)
+
+                # Fallback click handler
+                def make_play(i=idx):
+                    self.selected_sound_idx = i
+                    self.audio_manager.play_track(i)
+                    self.show_audio_menu = False
+                    self.toast(f"تم تشغيل: {self.audio_manager.active_track_name} 🎶✨", 3.0)
+
+                self.clickable_regions.append({
+                    "rect": (card_x, card_y, card_x + card_w, card_y + card_h),
+                    "action": make_play
+                })
+
+                t_title = f"{trk['icon']} {trk['title'].split('(')[0].strip()}"
+                status_sub = "▶ يعمل الآن" if is_playing_this else ("● محدد للتشغيل" if is_selected else "جاهز")
+                sub_col = (0, 255, 128) if is_playing_this else ((0, 229, 255) if is_selected else (160, 180, 200))
+
+                pil_texts.append((t_title, (card_x + 8, card_y + 10), FONT_ITEM, (255, 255, 255)))
+                pil_texts.append((status_sub, (card_x + 8, card_y + 36), FONT_SHELF_SUB, sub_col))
+
+        # ---------------------------------------------------------------------
+        # 8. Holographic Neon Volume Meter (Activated via Ear Touch)
+        # ---------------------------------------------------------------------
+        if (time.time() < self.volume_hud_timer) or self.audio_manager.is_playing:
+            vw = 230
+            vh = 36
+            vx = fw - 250
+            vy = 58
+            self.draw_glass_box(frame, vx, vy, vw, vh, bg_rgba=(12, 16, 28, 230), border_bgr=(0, 229, 255), border_thick=1)
+            vol_int = int(self.audio_manager.volume * 100)
+            vol_icon = "🔊" if vol_int > 50 else ("🔉" if vol_int > 0 else "🔇")
+            pil_texts.append((f"{vol_icon} {vol_int}%", (vx + 10, vy + 8), FONT_BTN, (255, 255, 255)))
+
+            # Volume progress bar
+            bar_x = vx + 85
+            bar_y = vy + 13
+            bar_w = 130
+            bar_h = 10
+            cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h), (35, 45, 65), -1)
+            fill_w = int(bar_w * self.audio_manager.volume)
+            if fill_w > 0:
+                cv2.rectangle(frame, (bar_x, bar_y), (bar_x + fill_w, bar_y + bar_h), (0, 229, 255), -1)
 
         # ---------------------------------------------------------------------
         # Render All Text via PIL in Single Pass (Native Crisp Arabic)
@@ -1416,9 +1640,18 @@ class ARStudioEngine:
     # =========================================================================
     # Hand Gestures & Skeletal Interaction System
     # =========================================================================
-    def process_and_draw_hands(self, frame, hand_lmks_list):
+    def process_and_draw_hands(self, frame, hand_lmks_list, face_lmks=None, pose_lmks=None):
         fh, fw = frame.shape[:2]
         now = time.time()
+
+        # 1. Continuous Head Yaw Audio Carousel Navigation (When Audio Menu is Open)
+        if self.show_audio_menu and self.audio_manager.tracks:
+            n_tracks = len(self.audio_manager.tracks)
+            # Map head yaw [-0.55, 0.55] across the audio tracks
+            clamped_yaw = float(np.clip(self.smooth_yaw, -0.55, 0.55))
+            norm_yaw = (clamped_yaw + 0.55) / 1.10
+            sel_idx = int(norm_yaw * n_tracks)
+            self.selected_sound_idx = int(np.clip(sel_idx, 0, n_tracks - 1))
 
         if not hand_lmks_list or not self.enable_gestures:
             if now - self.hand_cursor.get("last_seen", 0) > 0.5:
@@ -1427,7 +1660,7 @@ class ARStudioEngine:
 
         self.hand_cursor["last_seen"] = now
 
-        # 1. Draw Skeleton & Glowing Joints for all detected hands
+        # 2. Draw Skeleton & Glowing Joints for all detected hands
         for hand in hand_lmks_list:
             pts = [(int(lmk.x * fw), int(lmk.y * fh)) for lmk in hand]
 
@@ -1454,7 +1687,130 @@ class ARStudioEngine:
                 else:
                     cv2.circle(frame, pt, 3, (0, 229, 255), -1, cv2.LINE_AA)
 
-        # 2. Select primary interactive hand (prioritize pinching hand)
+        # 3. Open Palm Detection across all detected hands (All 5 Fingers Extended)
+        any_open_palm = False
+        for hand in hand_lmks_list:
+            h_pts = [(int(lmk.x * fw), int(lmk.y * fh)) for lmk in hand]
+            w = h_pts[0]
+
+            d0_4 = math.hypot(h_pts[4][0] - w[0], h_pts[4][1] - w[1])    # Thumb tip
+            d0_2 = math.hypot(h_pts[2][0] - w[0], h_pts[2][1] - w[1])    # Thumb MCP
+            d0_8 = math.hypot(h_pts[8][0] - w[0], h_pts[8][1] - w[1])    # Index tip
+            d0_6 = math.hypot(h_pts[6][0] - w[0], h_pts[6][1] - w[1])    # Index PIP
+            d0_12 = math.hypot(h_pts[12][0] - w[0], h_pts[12][1] - w[1])  # Middle tip
+            d0_10 = math.hypot(h_pts[10][0] - w[0], h_pts[10][1] - w[1])  # Middle PIP
+            d0_16 = math.hypot(h_pts[16][0] - w[0], h_pts[16][1] - w[1])  # Ring tip
+            d0_14 = math.hypot(h_pts[14][0] - w[0], h_pts[14][1] - w[1])  # Ring PIP
+            d0_20 = math.hypot(h_pts[20][0] - w[0], h_pts[20][1] - w[1])  # Pinky tip
+            d0_18 = math.hypot(h_pts[18][0] - w[0], h_pts[18][1] - w[1])  # Pinky PIP
+
+            fingers_open = (
+                (d0_4 > d0_2 * 1.15) and
+                (d0_8 > d0_6 * 1.12) and
+                (d0_12 > d0_10 * 1.12) and
+                (d0_16 > d0_14 * 1.12) and
+                (d0_20 > d0_18 * 1.12)
+            )
+            d_pinch = math.hypot(h_pts[4][0] - h_pts[8][0], h_pts[4][1] - h_pts[8][1])
+            h_scale = max(20.0, float(np.hypot(w[0] - h_pts[9][0], w[1] - h_pts[9][1])))
+
+            if fingers_open and (d_pinch > 45) and (h_scale > 35):
+                any_open_palm = True
+                palm_center = ((w[0] + h_pts[9][0]) // 2, (w[1] + h_pts[9][1]) // 2)
+                cv2.circle(frame, palm_center, 18, (0, 229, 255), 2, cv2.LINE_AA)
+                cv2.circle(frame, palm_center, 24, (255, 255, 255), 1, cv2.LINE_AA)
+                break
+
+        # Open Palm Rising Edge Trigger (Debounced Single-Shot)
+        just_opened_palm = any_open_palm and not self.prev_palm_state and (now - self.last_palm_time > 0.75)
+        if just_opened_palm:
+            self.last_palm_time = now
+            if not self.show_audio_menu:
+                # 1st Open Palm: Open horizontal floating audio dock
+                self.show_audio_menu = True
+                self.toast("🎵 تم فتح قائمة المقاطع الصوتية (التفت برأسك للاختيار) 🖐️", 3.0)
+            else:
+                # 2nd Open Palm: Confirm & play selected track, then smoothly close dock
+                self.audio_manager.play_track(self.selected_sound_idx)
+                self.show_audio_menu = False
+                self.toast(f"تم تشغيل: {self.audio_manager.active_track_name} 🎶✨", 3.0)
+
+        self.prev_palm_state = any_open_palm
+
+        # 4. Resolve Head Landmarks for Face Gestures (Lips & Ears)
+        mouth_pt = None
+        ear_r_pt = None
+        ear_l_pt = None
+
+        if face_lmks:
+            m13 = get_lmk(face_lmks, 13)
+            m14 = get_lmk(face_lmks, 14)
+            if m13 and m14:
+                mouth_pt = (int((m13.x + m14.x) * 0.5 * fw), int((m13.y + m14.y) * 0.5 * fh))
+
+            lr = get_lmk(face_lmks, 234)  # Right ear tragus
+            ll = get_lmk(face_lmks, 454)  # Left ear tragus
+            if lr:
+                ear_r_pt = (int(lr.x * fw), int(lr.y * fh))
+            if ll:
+                ear_l_pt = (int(ll.x * fw), int(ll.y * fh))
+
+        if mouth_pt is None and pose_lmks:
+            p9 = get_lmk(pose_lmks, 9)
+            p10 = get_lmk(pose_lmks, 10)
+            if p9 and p10:
+                mouth_pt = (int((p9.x + p10.x) * 0.5 * fw), int((p9.y + p10.y) * 0.5 * fh))
+
+        if ear_r_pt is None and pose_lmks:
+            pr = get_lmk(pose_lmks, 8)
+            if pr:
+                ear_r_pt = (int(pr.x * fw), int(pr.y * fh))
+
+        if ear_l_pt is None and pose_lmks:
+            pl = get_lmk(pose_lmks, 7)
+            if pl:
+                ear_l_pt = (int(pl.x * fw), int(pl.y * fh))
+
+        # 5. Face/Body Touch Gestures (Shhh Stop & Ear Volume Controls)
+        for hand in hand_lmks_list:
+            h_idx_pt = (int(hand[8].x * fw), int(hand[8].y * fh))
+
+            # A. Index on Lips: Complete Stop ("Shhh" Gesture)
+            if mouth_pt:
+                d_mouth = math.hypot(h_idx_pt[0] - mouth_pt[0], h_idx_pt[1] - mouth_pt[1])
+                if d_mouth < 45:
+                    cv2.circle(frame, mouth_pt, 22, (255, 0, 180), 2, cv2.LINE_AA)
+                    cv2.circle(frame, mouth_pt, 28, (255, 255, 255), 1, cv2.LINE_AA)
+                    if self.audio_manager.is_playing and (now - self.last_mute_time > 0.6):
+                        self.last_mute_time = now
+                        self.audio_manager.stop()
+                        self.toast("🤫 تم إيقاف الصوت تماماً (Shhh)", 2.5)
+
+            # B. Right Index on Right Ear: Volume UP (+10% per single touch)
+            if ear_r_pt:
+                d_ear_r = math.hypot(h_idx_pt[0] - ear_r_pt[0], h_idx_pt[1] - ear_r_pt[1])
+                if d_ear_r < 52:
+                    cv2.circle(frame, ear_r_pt, 24, (0, 255, 128), 3, cv2.LINE_AA)
+                    cv2.circle(frame, ear_r_pt, 30, (255, 255, 255), 1, cv2.LINE_AA)
+                    if now - self.last_vol_time > 0.6:
+                        self.last_vol_time = now
+                        self.audio_manager.adjust_volume(+0.10)
+                        self.volume_hud_timer = now + 3.0
+                        self.toast(f"🔊 رفع الصوت (+10%): {int(self.audio_manager.volume * 100)}%", 1.5)
+
+            # C. Left Index on Left Ear: Volume DOWN (-10% per single touch)
+            if ear_l_pt:
+                d_ear_l = math.hypot(h_idx_pt[0] - ear_l_pt[0], h_idx_pt[1] - ear_l_pt[1])
+                if d_ear_l < 52:
+                    cv2.circle(frame, ear_l_pt, 24, (0, 229, 255), 3, cv2.LINE_AA)
+                    cv2.circle(frame, ear_l_pt, 30, (255, 255, 255), 1, cv2.LINE_AA)
+                    if now - self.last_vol_time > 0.6:
+                        self.last_vol_time = now
+                        self.audio_manager.adjust_volume(-0.10)
+                        self.volume_hud_timer = now + 3.0
+                        self.toast(f"🔉 خفض الصوت (-10%): {int(self.audio_manager.volume * 100)}%", 1.5)
+
+        # 6. Select primary interactive hand for Try-on cursor & Pinching
         primary_hand = hand_lmks_list[0]
         for hand in hand_lmks_list:
             t = hand[4]
@@ -1531,7 +1887,7 @@ class ARStudioEngine:
         self.hand_cursor["is_pinching"] = is_pinching
         self.hand_cursor["pinch_ratio"] = pinch_ratio
 
-        # 3. Air Pinch: Instant Click & Grab item (Rising Edge Trigger - Single Frame Activation)
+        # 7. Air Pinch: Instant Click & Grab item (Rising Edge Trigger - Single Frame Activation)
         just_pinched = is_pinching and not self.prev_pinching and (now - self.last_pinch_time > 0.18)
         if just_pinched:
             self.last_pinch_time = now
@@ -1543,7 +1899,7 @@ class ARStudioEngine:
 
         self.prev_pinching = is_pinching
 
-        # 4. Render Clean Minimalist Micro-Pointer (Zero Rings, Zero Clutter)
+        # 8. Render Clean Minimalist Micro-Pointer (Zero Rings, Zero Clutter)
         cursor_col = (0, 255, 128) if is_pinching else ((0, 229, 255) if is_pointing else (255, 200, 0))
 
         if is_pinching:
@@ -1646,7 +2002,7 @@ class ARStudioEngine:
                 self.draw_rich_ui(frame, fps)
 
             # 5. Process & Draw Hand Skeletal Tracking and Air Gestures
-            self.process_and_draw_hands(frame, hand_lmks_list)
+            self.process_and_draw_hands(frame, hand_lmks_list, face_lmks=face_lmks, pose_lmks=pose_lmks)
 
             cv2.imshow(self.window_name, frame)
 
@@ -1659,6 +2015,17 @@ class ARStudioEngine:
                 self.toggle_background()
             elif key in [ord('g'), ord('G')]:
                 self.toggle_gestures()
+            elif key in [ord('m'), ord('M')]:
+                self.show_audio_menu = not self.show_audio_menu
+                self.toast("قائمة المقاطع الصوتية 🎵" if self.show_audio_menu else "إغلاق قائمة الصوت", 2.0)
+            elif key in [ord('+'), ord('=')]:
+                self.audio_manager.adjust_volume(+0.10)
+                self.volume_hud_timer = time.time() + 3.0
+                self.toast(f"🔊 رفع الصوت (+10%): {int(self.audio_manager.volume * 100)}%", 1.5)
+            elif key in [ord('-'), ord('_')]:
+                self.audio_manager.adjust_volume(-0.10)
+                self.volume_hud_timer = time.time() + 3.0
+                self.toast(f"🔉 خفض الصوت (-10%): {int(self.audio_manager.volume * 100)}%", 1.5)
             elif key in [ord('c'), ord('C')]:
                 self.toggle_camera()
             elif key in [ord('s'), ord('S')]:
