@@ -33,6 +33,11 @@ try:
 except ImportError:
     HAS_BIDI = False
 
+# Suppress verbose C++ logs and offline telemetry errors
+os.environ["GLOG_minloglevel"] = "2"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+os.environ["ABSL_LOG_MIN_SEVERITY"] = "2"
+
 # Ensure UTF-8 output on Windows consoles
 if sys.platform.startswith("win"):
     try:
@@ -113,6 +118,11 @@ class ARStudioEngine:
         self.camera_source = "local"
         self.cap = None
         self.window_name = "VisionCraft AR Smart Mirror & Try-On Studio (Python Native)"
+
+        # Hardware Acceleration & GPU/CPU Detection
+        self.has_gpu = False
+        self.gpu_device_name = "CPU"
+        self._init_hardware_acceleration()
 
         # Load catalog
         self.catalog = self._load_catalog()
@@ -204,6 +214,8 @@ class ARStudioEngine:
         self.bg_wall_raw = None
         self.bg_wall_cached = None
         self.prev_seg_mask = None
+        self.seg_threshold = 0.60  # Strict probability cutoff to reject couches, chairs, walls
+        self.seg_feather = 0.14    # Smooth transition roll-off for anti-aliased natural edges
         self._load_background_assets()
 
         # MediaPipe Tasks Landmarkers
@@ -223,52 +235,51 @@ class ARStudioEngine:
         self._init_spatial_hotspots()
 
     def _init_spatial_hotspots(self):
-        # Interactive Spatial Image Map on the 3 Walls (Panorama: 3600 x 720)
-        # Right Wall (glasses, cap): X in [2400, 3600]
-        # Center Wall (suits, dresses, graduation): X in [1200, 2400]
-        # Left Wall (scarves, hairstyles, masks): X in [0, 1200]
-        self.spatial_hotspots = [
-            # -----------------------------------------------------------------
-            # الجدار الأيمن: رف القبعات والكوافي (Top Shelf: Caps & Hats)
-            # -----------------------------------------------------------------
-            {"id": "cap_1", "cat": "cap", "title": "قبعة أنيقة #1", "icon": "🧢", "wall": "right", "rect": (2610, 195, 2750, 320), "color": (255, 0, 127)},
-            {"id": "cap_2", "cat": "cap", "title": "قبعة كلاسيكية #2", "icon": "🧢", "wall": "right", "rect": (2780, 195, 2920, 320), "color": (255, 0, 127)},
-            {"id": "cap_3", "cat": "cap", "title": "كاب رياضي #3", "icon": "🧢", "wall": "right", "rect": (2950, 195, 3090, 320), "color": (255, 0, 127)},
-            {"id": "cap_4", "cat": "cap", "title": "قبعة شتوية #4", "icon": "🧢", "wall": "right", "rect": (3120, 195, 3260, 320), "color": (255, 0, 127)},
-            {"id": "cap_5", "cat": "cap", "title": "قبعة سوداء فاخرة #5", "icon": "🧢", "wall": "right", "rect": (3290, 195, 3430, 320), "color": (255, 0, 127)},
+        # 1. Try loading pixel-perfect hotspots from spatial_hotspots.json
+        hotspots_json = THINGS_DIR / "backgrounds" / "spatial_hotspots.json"
+        loaded_from_json = False
+        if hotspots_json.exists():
+            try:
+                with open(hotspots_json, "r", encoding="utf-8") as f:
+                    self.spatial_hotspots = json.load(f)
+                    loaded_from_json = True
+            except Exception as e:
+                print(f"[!] Error reading spatial_hotspots.json: {e}")
 
-            # -----------------------------------------------------------------
-            # الجدار الأيمن: رف النظارات الفاخرة (Middle Shelf: Designer Eyewear)
-            # -----------------------------------------------------------------
-            {"id": "glasses_1", "cat": "glasses", "title": "نظارة شمسية فاخرة #1", "icon": "👓", "wall": "right", "rect": (2610, 365, 2750, 480), "color": (0, 229, 255)},
-            {"id": "glasses_2", "cat": "glasses", "title": "نظارة شمسية كلاسيك #2", "icon": "👓", "wall": "right", "rect": (2780, 365, 2920, 480), "color": (0, 229, 255)},
-            {"id": "glasses_3", "cat": "glasses", "title": "نظارة أفياتور ذهبية #3", "icon": "👓", "wall": "right", "rect": (2950, 365, 3090, 480), "color": (0, 229, 255)},
-            {"id": "glasses_4", "cat": "glasses", "title": "نظارة سوداء داكنة #4", "icon": "👓", "wall": "right", "rect": (3120, 365, 3260, 480), "color": (0, 229, 255)},
-            {"id": "glasses_5", "cat": "glasses", "title": "نظارة عصرية راقية #5", "icon": "👓", "wall": "right", "rect": (3290, 365, 3430, 480), "color": (0, 229, 255)},
-
-            # -----------------------------------------------------------------
-            # الجدار الأوسط: خزانة الملابس والبدلات المعلقة (Center Wardrobe)
-            # -----------------------------------------------------------------
-            {"id": "suite_1", "cat": "suite", "title": "بدلة كحلية رسمية #1", "icon": "👔", "wall": "center", "rect": (1370, 190, 1490, 520), "color": (255, 200, 0)},
-            {"id": "suite_2", "cat": "suite", "title": "بدلة أعمال سوداء #2", "icon": "👔", "wall": "center", "rect": (1510, 190, 1630, 520), "color": (255, 200, 0)},
-            {"id": "suite_3", "cat": "suite", "title": "بدلة تاكسيدو رسمية #3", "icon": "👔", "wall": "center", "rect": (1650, 190, 1770, 520), "color": (255, 200, 0)},
-            {"id": "graduition_1", "cat": "graduition", "title": "روب التخرج الأكاديمي", "icon": "🎓", "wall": "center", "rect": (1790, 190, 1910, 520), "color": (255, 200, 0)},
-            {"id": "suite_4", "cat": "suite", "title": "بدلة عصرية رمادية #4", "icon": "👔", "wall": "center", "rect": (1930, 190, 2050, 520), "color": (255, 200, 0)},
-            {"id": "maried_1", "cat": "maried", "title": "فستان زفاف ملكي #1", "icon": "👰", "wall": "center", "rect": (2070, 190, 2190, 520), "color": (255, 200, 0)},
-            {"id": "maried_2", "cat": "maried", "title": "فستان سهرة راقي #2", "icon": "👰", "wall": "center", "rect": (2210, 190, 2330, 520), "color": (255, 200, 0)},
-
-            # -----------------------------------------------------------------
-            # الجدار الأيسر: رفوف الأوشحة وتراكيب الشعر (Left Vanity Wall)
-            # -----------------------------------------------------------------
-            {"id": "hair_1", "cat": "hair", "title": "تسريحة شعر أنيقة #1", "icon": "💇", "wall": "left", "rect": (340, 210, 470, 350), "color": (0, 229, 255)},
-            {"id": "hair_2", "cat": "hair", "title": "تسريحة شعر كلاسيك #2", "icon": "💇", "wall": "left", "rect": (500, 210, 630, 350), "color": (0, 229, 255)},
-            {"id": "hair_3", "cat": "hair", "title": "تسريحة شعر عصرية #3", "icon": "💇", "wall": "left", "rect": (660, 210, 790, 350), "color": (0, 229, 255)},
-            {"id": "hair_4", "cat": "hair", "title": "تسريحة شعر مميزة #4", "icon": "💇", "wall": "left", "rect": (820, 210, 950, 350), "color": (0, 229, 255)},
-
-            {"id": "wishah_1", "cat": "wishah", "title": "وشاح حريري فاخر #1", "icon": "🧣", "wall": "left", "rect": (380, 380, 530, 510), "color": (0, 229, 255)},
-            {"id": "wishah_2", "cat": "wishah", "title": "شال كشميري ملكي #2", "icon": "🧣", "wall": "left", "rect": (570, 380, 720, 510), "color": (0, 229, 255)},
-            {"id": "mask_1", "cat": "mask", "title": "شماغ وقناع كوفية أصيل", "icon": "😷", "wall": "left", "rect": (760, 380, 900, 510), "color": (0, 229, 255)}
-        ]
+        if not loaded_from_json or not self.spatial_hotspots:
+            # Verified coordinates matching things_assets/backgrounds/panorama_room_3840.jpg
+            self.spatial_hotspots = [
+                # Center Wall: Luxury Wardrobe
+                {"id": "suite_1", "cat": "suite", "title": "بدلة كحلية رسمية #1", "icon": "👔", "wall": "center", "rect": [1267, 198, 1403, 402], "color": [255, 200, 0]},
+                {"id": "suite_2", "cat": "suite", "title": "بدلة أعمال سوداء #2", "icon": "👔", "wall": "center", "rect": [1399, 198, 1535, 373], "color": [255, 200, 0]},
+                {"id": "suite_3", "cat": "suite", "title": "بدلة تاكسيدو رسمية #3", "icon": "👔", "wall": "center", "rect": [1551, 198, 1650, 530], "color": [255, 200, 0]},
+                {"id": "graduition_1", "cat": "graduition", "title": "روب التخرج الأكاديمي", "icon": "🎓", "wall": "center", "rect": [1665, 198, 1801, 356], "color": [255, 200, 0]},
+                {"id": "suite_4", "cat": "suite", "title": "بدلة عصرية رمادية #4", "icon": "👔", "wall": "center", "rect": [1798, 198, 1934, 389], "color": [255, 200, 0]},
+                {"id": "suite_5", "cat": "suite", "title": "بدلة كلاسيكية فاخرة #5", "icon": "👔", "wall": "center", "rect": [1931, 198, 2067, 396], "color": [255, 200, 0]},
+                {"id": "maried_1", "cat": "maried", "title": "فستان زفاف ملكي #1", "icon": "👰", "wall": "center", "rect": [2063, 198, 2199, 437], "color": [255, 200, 0]},
+                {"id": "maried_2", "cat": "maried", "title": "فستان سهرة راقي #2", "icon": "👰", "wall": "center", "rect": [2196, 198, 2332, 400], "color": [255, 200, 0]},
+                # Right Wall: Top Shelf (Caps)
+                {"id": "cap_1", "cat": "cap", "title": "قبعة أنيقة #1", "icon": "🧢", "wall": "right", "rect": [2533, 217, 2627, 328], "color": [255, 0, 127]},
+                {"id": "cap_2", "cat": "cap", "title": "قبعة كلاسيكية #2", "icon": "🧢", "wall": "right", "rect": [2736, 221, 2844, 328], "color": [255, 0, 127]},
+                {"id": "cap_3", "cat": "cap", "title": "كاب رياضي #3", "icon": "🧢", "wall": "right", "rect": [2917, 225, 3043, 328], "color": [255, 0, 127]},
+                {"id": "cap_4", "cat": "cap", "title": "قبعة شتوية #4", "icon": "🧢", "wall": "right", "rect": [3139, 219, 3221, 328], "color": [255, 0, 127]},
+                {"id": "cap_5", "cat": "cap", "title": "قبعة سوداء فاخرة #5", "icon": "🧢", "wall": "right", "rect": [3311, 256, 3489, 328], "color": [255, 0, 127]},
+                # Right Wall: Lower Shelf (Eyewear)
+                {"id": "glasses_1", "cat": "glasses", "title": "نظارة شمسية فاخرة #1", "icon": "👓", "wall": "right", "rect": [2510, 404, 2650, 482], "color": [0, 229, 255]},
+                {"id": "glasses_2", "cat": "glasses", "title": "نظارة شمسية كلاسيك #2", "icon": "👓", "wall": "right", "rect": [2720, 416, 2860, 482], "color": [0, 229, 255]},
+                {"id": "glasses_3", "cat": "glasses", "title": "نظارة أفياتور ذهبية #3", "icon": "👓", "wall": "right", "rect": [2910, 418, 3050, 482], "color": [0, 229, 255]},
+                {"id": "glasses_4", "cat": "glasses", "title": "نظارة سوداء داكنة #4", "icon": "👓", "wall": "right", "rect": [3110, 417, 3250, 482], "color": [0, 229, 255]},
+                {"id": "glasses_5", "cat": "glasses", "title": "نظارة عصرية راقية #5", "icon": "👓", "wall": "right", "rect": [3310, 415, 3450, 482], "color": [0, 229, 255]},
+                # Left Wall: Top Shelf (Hair)
+                {"id": "hair_1", "cat": "hair", "title": "تسريحة شعر أنيقة #1", "icon": "💇", "wall": "left", "rect": [216, 241, 304, 328], "color": [0, 229, 255]},
+                {"id": "hair_2", "cat": "hair", "title": "تسريحة شعر كلاسيك #2", "icon": "💇", "wall": "left", "rect": [421, 250, 551, 328], "color": [0, 229, 255]},
+                {"id": "hair_3", "cat": "hair", "title": "تسريحة شعر عصرية #3", "icon": "💇", "wall": "left", "rect": [634, 217, 766, 328], "color": [0, 229, 255]},
+                {"id": "hair_4", "cat": "hair", "title": "تسريحة شعر مميزة #4", "icon": "💇", "wall": "left", "rect": [846, 230, 954, 328], "color": [0, 229, 255]},
+                # Left Wall: Lower Rail (Shawls & Mask)
+                {"id": "wishah_1", "cat": "wishah", "title": "وشاح حريري فاخر #1", "icon": "🧣", "wall": "left", "rect": [298, 377, 402, 530], "color": [0, 229, 255]},
+                {"id": "wishah_2", "cat": "wishah", "title": "شال كشميري ملكي #2", "icon": "🧣", "wall": "left", "rect": [526, 377, 674, 530], "color": [0, 229, 255]},
+                {"id": "mask_1", "cat": "mask", "title": "شماغ وقناع كوفية أصيل", "icon": "😷", "wall": "left", "rect": [798, 377, 902, 530], "color": [0, 229, 255]}
+            ]
 
         # Link each hotspot to its full catalog item object
         for hs in self.spatial_hotspots:
@@ -303,6 +314,52 @@ class ARStudioEngine:
             except Exception as e:
                 print(f"[!] Background load error: {e}")
 
+    def _init_hardware_acceleration(self):
+        try:
+            if cv2.ocl.haveOpenCL():
+                cv2.ocl.setUseOpenCL(True)
+                dev = cv2.ocl.Device.getDefault()
+                if dev.type() == cv2.ocl.Device_TYPE_GPU:
+                    self.has_gpu = True
+                    self.gpu_device_name = dev.name()
+                    print(f"[+] تم تفعيل تسريع كرت الشاشة للرسوميات (GPU OpenCL): {self.gpu_device_name} 🚀")
+                else:
+                    print(f"[*] معالجة الرسوميات: OpenCL ({dev.name()})")
+            else:
+                print("[*] معالجة الرسوميات: معالج النظام (CPU Multi-threaded SIMD) 💻")
+        except Exception as e:
+            print(f"[*] Hardware acceleration check: {e}")
+
+        # MediaPipe AI Engine Probe (Test GPU delegate availability safely)
+        self.mediapipe_gpu_supported = False
+        seg_test = MODELS_DIR / "selfie_segmenter.tflite"
+        if seg_test.exists() and hasattr(mp_python.BaseOptions, "Delegate"):
+            try:
+                test_opts = mp_python.BaseOptions(
+                    model_asset_path=str(seg_test),
+                    delegate=mp_python.BaseOptions.Delegate.GPU
+                )
+                test_seg = vision.ImageSegmenter.create_from_options(
+                    vision.ImageSegmenterOptions(base_options=test_opts, running_mode=vision.RunningMode.IMAGE)
+                )
+                test_seg.close()
+                self.mediapipe_gpu_supported = True
+                print("[+] تم تفعيل تسريع كرت الشاشة لنماذج الذكاء الاصطناعي (MediaPipe GPU) 🚀")
+            except Exception:
+                self.mediapipe_gpu_supported = False
+                print("[+] محرك الذكاء الاصطناعي: معالج النظام فائق السرعة (CPU XNNPACK Vectorized) ⚡")
+
+    def _create_base_options(self, model_path):
+        if getattr(self, "mediapipe_gpu_supported", False):
+            try:
+                return mp_python.BaseOptions(
+                    model_asset_path=str(model_path),
+                    delegate=mp_python.BaseOptions.Delegate.GPU
+                )
+            except Exception:
+                pass
+        return mp_python.BaseOptions(model_asset_path=str(model_path))
+
     def _init_mediapipe_tasks(self):
         if not HAS_MEDIAPIPE:
             return
@@ -314,7 +371,7 @@ class ARStudioEngine:
 
         if face_task_path.exists():
             try:
-                base_opts = mp_python.BaseOptions(model_asset_path=str(face_task_path))
+                base_opts = self._create_base_options(face_task_path)
                 opts = vision.FaceLandmarkerOptions(
                     base_options=base_opts,
                     running_mode=vision.RunningMode.IMAGE,
@@ -326,7 +383,7 @@ class ARStudioEngine:
 
         if pose_task_path.exists():
             try:
-                base_opts = mp_python.BaseOptions(model_asset_path=str(pose_task_path))
+                base_opts = self._create_base_options(pose_task_path)
                 opts = vision.PoseLandmarkerOptions(
                     base_options=base_opts,
                     running_mode=vision.RunningMode.IMAGE
@@ -337,7 +394,7 @@ class ARStudioEngine:
 
         if hand_task_path.exists():
             try:
-                base_opts = mp_python.BaseOptions(model_asset_path=str(hand_task_path))
+                base_opts = self._create_base_options(hand_task_path)
                 opts = vision.HandLandmarkerOptions(
                     base_options=base_opts,
                     running_mode=vision.RunningMode.IMAGE,
@@ -353,7 +410,7 @@ class ARStudioEngine:
 
         if seg_task_path.exists():
             try:
-                base_opts = mp_python.BaseOptions(model_asset_path=str(seg_task_path))
+                base_opts = self._create_base_options(seg_task_path)
                 opts = vision.ImageSegmenterOptions(
                     base_options=base_opts,
                     running_mode=vision.RunningMode.IMAGE,
@@ -506,58 +563,26 @@ class ARStudioEngine:
         # Looking right: nose moves to the right of the face (larger x), d_right increases, d_left decreases.
         # So (d_right - d_left) > 0 (positive yaw, right wall).
         # Looking left: nose moves left, (d_right - d_left) < 0 (negative yaw, left wall).
-        raw_head_yaw = (d_right - d_left) / max(1.0, d_left + d_right)
+        raw_head_yaw = (d_right - d_left) / max(1.0, d_left + d_right) - self.yaw_calibration_offset
+        self.raw_yaw = raw_head_yaw
 
-        # Eye Gaze estimation using irises if available (FaceLandmarker indices 468 & 473)
-        gaze_offset = 0.0
-        r_iris = get_lmk(face_lmks, 468)
-        l_iris = get_lmk(face_lmks, 473)
-        r_eye_in = get_lmk(face_lmks, 133)
-        r_eye_out = get_lmk(face_lmks, 33)
-        l_eye_in = get_lmk(face_lmks, 362)
-        l_eye_out = get_lmk(face_lmks, 263)
-
-        if r_iris and l_iris and r_eye_in and r_eye_out and l_eye_in and l_eye_out:
-            r_c = (r_eye_in.x + r_eye_out.x) * 0.5 * fw
-            l_c = (l_eye_in.x + l_eye_out.x) * 0.5 * fw
-            r_w = max(1.0, abs(r_eye_out.x - r_eye_in.x) * fw)
-            l_w = max(1.0, abs(l_eye_out.x - l_eye_in.x) * fw)
-
-            r_dev = (r_iris.x * fw - r_c) / r_w
-            l_dev = (l_iris.x * fw - l_c) / l_w
-            gaze_offset = (r_dev + l_dev) * 0.5
-
-        # Weighted combination of head yaw (85%) and fine eye gaze (15%)
-        combined = raw_head_yaw * 0.85 + gaze_offset * 0.15 - self.yaw_calibration_offset
-        self.raw_yaw = combined
-
-        # 1. Expanded deadband for rock-solid center wall focus (kills micro-tremors)
-        if abs(combined) < 0.028:
+        # 1. Comfortable deadband for rock-solid center wall focus (eliminates small head tremors)
+        if abs(raw_head_yaw) < 0.038:
             target = 0.0
         else:
-            # Smooth non-linear curve: comfortable 20-degree head turn smoothly views side walls
-            sign = 1.0 if combined > 0 else -1.0
-            norm_val = (abs(combined) - 0.028) / (1.0 - 0.028)
-            target = sign * float(np.clip((norm_val ** 0.92) * 2.8, 0.0, 1.0))
+            # Smooth progressive response to head turns without aggressive jumps
+            sign = 1.0 if raw_head_yaw > 0 else -1.0
+            norm_val = (abs(raw_head_yaw) - 0.038) / (1.0 - 0.038)
+            target = sign * float(np.clip(norm_val * 2.2, 0.0, 1.0))
 
-        # 2. Handle smooth transition if user clicked a wall tab
+        # 2. Smooth cinematic gimbal damping (fluid, jitter-free glide between walls)
         if self.target_yaw_override is not None:
-            self.smooth_yaw = 0.88 * self.smooth_yaw + 0.12 * self.target_yaw_override
+            self.smooth_yaw = 0.90 * self.smooth_yaw + 0.10 * self.target_yaw_override
             if abs(self.smooth_yaw - self.target_yaw_override) < 0.02:
                 self.target_yaw_override = None
         else:
-            # 3. Adaptive Dual-Rate Kinetic Damping (Ultra-smooth & Jitter-free)
-            yaw_diff = abs(target - self.smooth_yaw)
-            if yaw_diff < 0.012:
-                # Sub-threshold tremor: freeze movement completely for a rock-steady view
-                alpha = 0.965
-            elif yaw_diff < 0.08:
-                # Subtle / gentle head movement: cinematic fluid glide
-                alpha = 0.91
-            else:
-                # Deliberate intentional head turn: responsive smooth glide
-                alpha = 0.83
-
+            # Cinematic smoothing: responsive yet silky-smooth
+            alpha = 0.88
             self.smooth_yaw = alpha * self.smooth_yaw + (1.0 - alpha) * target
 
         # Determine active wall name
@@ -570,7 +595,7 @@ class ARStudioEngine:
 
         return self.smooth_yaw
 
-    def apply_virtual_background(self, frame, mp_img):
+    def apply_virtual_background(self, frame, mp_img, pose_lmks=None, hand_lmks_list=None):
         if self.bg_mode == "none" or self.image_segmenter is None:
             return
 
@@ -582,16 +607,71 @@ class ARStudioEngine:
                 return
 
             raw_mask = res_seg.confidence_masks[0].numpy_view()
+            if raw_mask.ndim == 3:
+                raw_mask = raw_mask.squeeze(-1)
+
             if raw_mask.shape[:2] != (fh, fw):
                 raw_mask = cv2.resize(raw_mask, (fw, fh), interpolation=cv2.INTER_LINEAR)
 
-            # Temporal smoothing to prevent edge fluttering
-            if self.prev_seg_mask is None or self.prev_seg_mask.shape != (fh, fw):
-                self.prev_seg_mask = raw_mask.copy()
-            else:
-                self.prev_seg_mask = 0.65 * self.prev_seg_mask + 0.35 * raw_mask
+            # 1. High-Precision Probability Thresholding & Sigmoidal Roll-off
+            # Eliminates background furniture (couch, chairs, bed, wall) with confidence < threshold
+            t_min = max(0.05, self.seg_threshold - self.seg_feather)
+            t_max = min(0.98, self.seg_threshold + self.seg_feather)
+            norm_mask = np.clip((raw_mask - t_min) / max(0.01, t_max - t_min), 0.0, 1.0)
+            # Smoothstep curve for razor-sharp yet antialiased natural edges
+            crisp_mask = norm_mask * norm_mask * (3.0 - 2.0 * norm_mask)
 
-            smooth_mask = cv2.GaussianBlur(self.prev_seg_mask, (7, 7), 0)
+            # 2. Anatomical Skeletal Envelope Gating (Cuts off sofa/couch wings extending beyond user)
+            if pose_lmks:
+                body_pts = []
+                for idx in [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 23, 24]:
+                    lm = get_lmk(pose_lmks, idx)
+                    if lm and getattr(lm, "visibility", 1.0) > 0.35:
+                        body_pts.append((lm.x * fw, lm.y * fh))
+
+                if len(body_pts) >= 4:
+                    bx_coords = [p[0] for p in body_pts]
+                    by_coords = [p[1] for p in body_pts]
+                    min_bx, max_bx = min(bx_coords), max(bx_coords)
+                    min_by, max_by = min(by_coords), max(by_coords)
+                    body_w = max(60.0, max_bx - min_bx)
+
+                    # Generous anatomical envelope
+                    env_x1 = max(0, int(min_bx - body_w * 0.55))
+                    env_x2 = min(fw, int(max_bx + body_w * 0.55))
+                    env_y1 = max(0, int(min_by - body_w * 0.50))
+                    env_y2 = fh
+
+                    # Create soft feathered spatial gate
+                    gate = np.zeros((fh, fw), dtype=np.float32)
+                    gate[env_y1:env_y2, env_x1:env_x2] = 1.0
+                    gate = cv2.GaussianBlur(gate, (35, 35), 0)
+                    crisp_mask = crisp_mask * gate
+
+            # 3. Hand Foreground Shield (Guarantees hands are 100% immune to background removal)
+            if hand_lmks_list:
+                hand_shield = np.zeros((fh, fw), dtype=np.float32)
+                for hand in hand_lmks_list:
+                    h_pts = np.array([(int(lm.x * fw), int(lm.y * fh)) for lm in hand], dtype=np.int32)
+                    for i, j in HAND_CONNECTIONS:
+                        if i < len(h_pts) and j < len(h_pts):
+                            cv2.line(hand_shield, tuple(h_pts[i]), tuple(h_pts[j]), 1.0, 32, cv2.LINE_AA)
+                    for pt in h_pts:
+                        cv2.circle(hand_shield, tuple(pt), 24, 1.0, -1)
+                    if len(h_pts) >= 4:
+                        hull = cv2.convexHull(h_pts)
+                        cv2.fillConvexPoly(hand_shield, hull, 1.0)
+
+                hand_shield = cv2.GaussianBlur(hand_shield, (15, 15), 0)
+                crisp_mask = np.maximum(crisp_mask, hand_shield)
+
+            # 4. Temporal Exponential Smoothing for Jitter-Free Studio Matting
+            if self.prev_seg_mask is None or self.prev_seg_mask.shape != (fh, fw):
+                self.prev_seg_mask = crisp_mask.copy()
+            else:
+                self.prev_seg_mask = 0.55 * self.prev_seg_mask + 0.45 * crisp_mask
+
+            smooth_mask = cv2.GaussianBlur(self.prev_seg_mask, (5, 5), 0)
             mask_3c = np.repeat(smooth_mask[:, :, np.newaxis], 3, axis=2)
 
             if self.bg_mode == "wall" and self.bg_panorama is not None:
@@ -635,8 +715,8 @@ class ARStudioEngine:
             fg_part = (frame * mask_3c).astype(np.float32)
             bg_part = (bg_target * (1.0 - mask_3c)).astype(np.float32)
             frame[:] = cv2.add(fg_part.astype(np.uint8), bg_part.astype(np.uint8))
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[!] Segmentation error: {e}")
 
     def toast(self, msg, duration=3.0):
         self.toast_message = msg
@@ -996,7 +1076,7 @@ class ARStudioEngine:
             is_worn = (self.worn_items.get(cur_cat) and self.worn_items[cur_cat].get("id") == cat_item.get("id"))
 
             # Hover detection with hysteresis to eliminate border jitter / flickering
-            pad = 14 if hs.get("_was_hover", False) else 0
+            pad = 18 if hs.get("_was_hover", False) else 6
             is_hover = (sx1 - pad <= hx <= sx2 + pad and sy1 - pad <= hy <= sy2 + pad)
             hs["_was_hover"] = is_hover
 
@@ -1409,6 +1489,7 @@ class ARStudioEngine:
         print(" * تتبع دوران الرأس والعين: التفِت يميناً أو يساراً لتحريك زاوية الرؤية بسلاسة تامة")
         print(" * [R]             معايرة وتثبيت زاوية النظر إلى المركز (Center Calibration)")
         print(" * [B]             تبديل عزل الخلفية (الغرفة ثلاثية الجدران / عزل ضبابي / كاميرا واقعية)")
+        print(" * [ [ ] / [ ] ]   ضبط دقة وحساسية عزل الخلفية بالذكاء الاصطناعي (تشديد/توسيع القص)")
         print(" * [G]             تشغيل / إيقاف إيماءات اليد والحركة (Air Gestures)")
         print(" * [C]             تبديل الكاميرا (كاميرا الكمبيوتر <-> كاميرا الجوال)")
         print(" * [1] - [8]       فتح الرفوف والانتقال المباشر إلى جدارها المخصص")
@@ -1463,7 +1544,7 @@ class ARStudioEngine:
 
                 # 2. Virtual Background Replacement (3-Wall Panoramic Room / Bokeh Blur)
                 if self.bg_mode != "none":
-                    self.apply_virtual_background(frame, mp_img)
+                    self.apply_virtual_background(frame, mp_img, pose_lmks=pose_lmks, hand_lmks_list=hand_lmks_list)
 
             # 3. Render Worn Accessories & Clothes onto the body
             self.render_worn_items(frame, face_lmks, pose_lmks)
@@ -1498,6 +1579,12 @@ class ARStudioEngine:
                 self.clear_all_worn()
             elif key in [ord('f'), ord('F')]:
                 self._toggle_fs()
+            elif key == ord('['):
+                self.seg_threshold = max(0.20, round(self.seg_threshold - 0.05, 2))
+                self.toast(f"حساسية العزل: {int(self.seg_threshold * 100)}% (توسيع العزل) 🪄", 2.0)
+            elif key == ord(']'):
+                self.seg_threshold = min(0.95, round(self.seg_threshold + 0.05, 2))
+                self.toast(f"حساسية العزل: {int(self.seg_threshold * 100)}% (تشديد دقة القص) ✂️", 2.0)
             elif ord('1') <= key <= ord('8'):
                 idx = key - ord('1')
                 if idx < len(self.shelf_categories):
