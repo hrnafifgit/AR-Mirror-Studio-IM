@@ -1,0 +1,19 @@
+{
+  "id": "suite_1",
+  "category": "suite",
+  "type": "suit",
+  "title": "bg removed png png",
+  "url": "things_assets/suite/suite_1.png",
+  "width": 736,
+  "height": 1083,
+  "keypoints": {
+    "12": [
+      0.2486,
+      0.157
+    ],
+    "11": [
+      0.7351,
+      0.1528
+    ]
+  }
+}

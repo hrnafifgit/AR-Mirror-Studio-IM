@@ -1,0 +1,19 @@
+{
+  "id": "cap_3",
+  "category": "cap",
+  "type": "cap",
+  "title": "bg removed png png",
+  "url": "things_assets/cap/cap_3.png",
+  "width": 736,
+  "height": 1308,
+  "keypoints": {
+    "2": [
+      0.4402,
+      0.6193
+    ],
+    "5": [
+      0.2405,
+      0.6147
+    ]
+  }
+}

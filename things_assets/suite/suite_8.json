@@ -1,0 +1,19 @@
+{
+  "id": "suite_8",
+  "category": "suite",
+  "type": "suit",
+  "title": "T shirt Suit Waistcoat Pan...",
+  "url": "things_assets/suite/suite_8.png",
+  "width": 728,
+  "height": 680,
+  "keypoints": {
+    "11": [
+      0.6422,
+      0.1493
+    ],
+    "12": [
+      0.3365,
+      0.1721
+    ]
+  }
+}

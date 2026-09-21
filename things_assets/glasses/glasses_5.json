@@ -1,0 +1,19 @@
+{
+  "id": "glasses_5",
+  "category": "glasses",
+  "type": "glasses",
+  "title": "Gafas De Sol Complementos ...",
+  "url": "things_assets/glasses/glasses_5.png",
+  "width": 360,
+  "height": 360,
+  "keypoints": {
+    "5": [
+      0.2861,
+      0.4972
+    ],
+    "2": [
+      0.7278,
+      0.4958
+    ]
+  }
+}

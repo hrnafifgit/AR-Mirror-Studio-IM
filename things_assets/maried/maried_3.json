@@ -1,0 +1,19 @@
+{
+  "id": "maried_3",
+  "category": "maried",
+  "type": "maried",
+  "title": "( ) png",
+  "url": "things_assets/maried/maried_3.png",
+  "width": 736,
+  "height": 1263,
+  "keypoints": {
+    "11": [
+      0.897,
+      0.1555
+    ],
+    "12": [
+      0.004,
+      0.1645
+    ]
+  }
+}

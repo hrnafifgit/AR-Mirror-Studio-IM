@@ -1,0 +1,19 @@
+{
+  "id": "suite_5",
+  "category": "suite",
+  "type": "suit",
+  "title": "Professional Black Suit Pa...",
+  "url": "things_assets/suite/suite_5.png",
+  "width": 640,
+  "height": 640,
+  "keypoints": {
+    "12": [
+      0.257,
+      0.3445
+    ],
+    "11": [
+      0.7336,
+      0.343
+    ]
+  }
+}

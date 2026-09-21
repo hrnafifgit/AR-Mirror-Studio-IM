@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🪞 VisionCraft - Full AR Smart Mirror & Try-On Studio</title>
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <link rel="icon" type="image/png" sizes="64x64" href="bee_logo.png">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Segoe+UI:wght@300;400;600;700&family=Fira+Code:wght@400;500;600&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="css/photoshop.css">
+    <link rel="stylesheet" href="css/gestures.css">
+    <style>
+        body,
+        html {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background: #05070c;
+            font-family: 'Segoe UI', sans-serif;
+        }
+
+        #arMirrorContainer {
+            display: flex !important;
+            width: 100vw;
+            height: 100vh;
+            position: fixed;
+            top: 0;
+            left: 0;
+            z-index: 1000;
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- FULL AR SMART MIRROR STUDIO OVERLAY -->
+    <div id="arMirrorContainer" class="ar-mirror-fullscreen">
+        <video id="arMirrorVideo" autoplay playsinline muted
+            style="position:fixed; top:0; left:0; width:1px; height:1px; opacity:0.01; pointer-events:none; z-index:-999;"></video>
+        <canvas id="arMirrorCanvas"></canvas>
+        <div class="mirror-top-hud">
+            <div class="mirror-badge">
+                <span class="mirror-pulse-dot"></span>
+                <span>🪞 Full AR Mirror Studio (60 FPS Live)</span>
+            </div>
+            <button class="ps-btn" id="btnMirrorCamToggle"
+                style="background: rgba(0, 229, 255, 0.2); border-color: #00e5ff; color: #00e5ff; font-weight: 600;"
+                onclick="toggleMirrorCamSource()" title="تبديل فوري بين كاميرا الكمبيوتر وكاميرا الجوال">🔄 تبديل
+                المصدر</button>
+            <button class="ps-btn" id="btnMirrorCamSource"
+                style="background: rgba(0, 229, 255, 0.15); border-color: #00e5ff; color: #00e5ff; font-weight: 600;"
+                onclick="openIpCamSettingsModal()">📱 كاميرا الجوال (IP Cam)</button>
+            <button class="ps-btn ps-btn-accent"
+                style="background: linear-gradient(135deg, #00dfd8, #0070f3); border-color:#00dfd8; color:#fff; font-weight:600;"
+                onclick="(window.arMirrorStudio || arMirrorStudio) && (window.arMirrorStudio || arMirrorStudio).takeSnapshot()">📸
+                التقاط صورة (Snapshot)</button>
+            <button class="ps-btn ps-btn-accent"
+                style="background: linear-gradient(135deg, #a855f7, #ec4899); border-color:#d946ef; color:#fff; font-weight:700; box-shadow:0 0 16px rgba(217,70,239,0.5);"
+                onclick="(window.arMirrorStudio || arMirrorStudio) && (window.arMirrorStudio || arMirrorStudio).takeMagicAISnapshot()">🪄
+                توليد سحري فائق (Magic AI TPS)</button>
+            <button class="ps-btn"
+                style="background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.2); color:#fff;"
+                onclick="(window.arMirrorStudio || arMirrorStudio) && (window.arMirrorStudio || arMirrorStudio).clearWorn()">🔄
+                نزع الكل (Clear All)</button>
+            <a href="/" class="ps-btn"
+                style="border-color:#ff007f; color:#ff007f; font-weight:bold; text-decoration:none; display:flex; align-items:center;">🎨
+                استوديو فوتوشوب</a>
+        </div>
+        <div class="mirror-instructions-hud">
+            <span>💡 <b>طريقة الاستخدام:</b> انقر على أي رف جانبي أو مد يدك نحوه لفتح قائمة الملابس، ثم انقر على القطعة
+                لارتدائها تلقائياً!</span>
+        </div>
+    </div>
+
+    <!-- IP WEBCAM STREAM SETTINGS MODAL -->
+    <div id="ipCamModal" class="ps-modal-overlay"
+        style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.78); backdrop-filter:blur(10px); z-index:999999; align-items:center; justify-content:center;">
+        <div
+            style="background:#111625; border:1px solid rgba(0,229,255,0.35); border-radius:14px; width:500px; max-width:92vw; padding:24px; box-shadow:0 24px 60px rgba(0,0,0,0.85), 0 0 35px rgba(0,229,255,0.18); color:#fff; font-family:'Segoe UI', sans-serif;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                <div style="display:flex; align-items:center; gap:10px;">
+                    <span style="font-size:24px;">📱</span>
+                    <div>
+                        <h3 style="margin:0; font-size:18px; font-weight:700; color:#00e5ff;">ربط كاميرا الجوال (IP
+                            Webcam)</h3>
+                        <span style="font-size:11px; color:#94a3b8;">استخدام كاميرا الهاتف الذكي فائقة الوضوح</span>
+                    </div>
+                </div>
+                <button class="ps-btn" style="padding:2px 8px; min-width:auto; border-color:rgba(255,255,255,0.2);"
+                    onclick="closeIpCamModal()">✕</button>
+            </div>
+
+            <div style="margin-bottom:16px;">
+                <label style="display:block; font-size:12px; font-weight:600; color:#cbd5e1; margin-bottom:6px;">رابط
+                    تدفق الكاميرا من الجوال:</label>
+                <div style="display:flex; gap:6px;">
+                    <input type="text" id="ipCamUrlInput"
+                        style="flex:1; background:#080b14; border:1px solid rgba(0,229,255,0.3); border-radius:7px; padding:9px 12px; color:#00e5ff; font-family:Consolas, monospace; font-size:13px; font-weight:600;"
+                        value="http://192.168.8.106:8080/video">
+                </div>
+            </div>
+
+            <div style="display:flex; gap:10px; justify-content:flex-end;">
+                <button class="ps-btn" style="border-color:rgba(255,255,255,0.2); color:#cbd5e1;"
+                    onclick="switchToLaptopCam()">💻 كاميرا اللابتوب</button>
+                <button class="ps-btn ps-btn-accent"
+                    style="background:linear-gradient(135deg, #00dfd8, #0070f3); border-color:#00dfd8; color:#fff; font-weight:700;"
+                    onclick="applyIpCamStream()">📱 تفعيل كاميرا الجوال</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Vision & MediaPipe Engine Scripts -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+
+    <!-- Modular AR Mirror Subsystems -->
+    <script src="js/ar/ar_catalog.js?v=1"></script>
+    <script src="js/ar/ar_fitting.js?v=1"></script>
+    <script src="js/ar/ar_ui.js?v=1"></script>
+    <script src="js/ar_mirror.js?v=9"></script>
+
+    <script>
+        // Mock app instance for toast messages
+        window.app = {
+            showToast: function (msg, icon) {
+                console.log("[AR Toast]", icon, msg);
+            }
+        };
+
+        window.addEventListener("DOMContentLoaded", () => {
+            if (typeof toggleARMirror === "function") {
+                toggleARMirror();
+            }
+        });
+
+        function openIpCamSettingsModal() {
+            document.getElementById("ipCamModal").style.display = "flex";
+        }
+        function closeIpCamModal() {
+            document.getElementById("ipCamModal").style.display = "none";
+        }
+        async function applyIpCamStream() {
+            const url = document.getElementById("ipCamUrlInput").value.trim();
+            localStorage.setItem("visioncraft_cam_source", "ipcam");
+            localStorage.setItem("visioncraft_ipcam_url", url);
+            if (window.arMirrorStudio) await window.arMirrorStudio.startIpCameraStream(url);
+            closeIpCamModal();
+        }
+        async function switchToLaptopCam() {
+            localStorage.setItem("visioncraft_cam_source", "local");
+            if (window.arMirrorStudio) await window.arMirrorStudio.startLocalCamera();
+            closeIpCamModal();
+        }
+        async function toggleMirrorCamSource() {
+            if (window.arMirrorStudio) window.arMirrorStudio.toggleCamSource();
+        }
+    </script>
+</body>
+
+</html>

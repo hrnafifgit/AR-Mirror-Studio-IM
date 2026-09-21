@@ -1,0 +1,19 @@
+{
+  "id": "glasses_4",
+  "category": "glasses",
+  "type": "glasses",
+  "title": "Black sunglasses with dark...",
+  "url": "things_assets/glasses/glasses_4.png",
+  "width": 626,
+  "height": 626,
+  "keypoints": {
+    "2": [
+      0.7061,
+      0.4073
+    ],
+    "5": [
+      0.2764,
+      0.4137
+    ]
+  }
+}

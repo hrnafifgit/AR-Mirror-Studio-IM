@@ -1,0 +1,19 @@
+{
+  "id": "maried_1",
+  "category": "maried",
+  "type": "maried",
+  "title": "زي عريس ومناسبات #1",
+  "url": "things_assets/maried/maried_1.png",
+  "width": 736,
+  "height": 1389,
+  "keypoints": {
+    "12": [
+      0.2289,
+      0.3175
+    ],
+    "11": [
+      0.7663,
+      0.3153
+    ]
+  }
+}

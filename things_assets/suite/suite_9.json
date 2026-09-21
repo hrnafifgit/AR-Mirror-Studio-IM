@@ -1,0 +1,19 @@
+{
+  "id": "suite_9",
+  "category": "suite",
+  "type": "suit",
+  "title": "Tuxedo bg removed png png",
+  "url": "things_assets/suite/suite_9.png",
+  "width": 640,
+  "height": 1064,
+  "keypoints": {
+    "12": [
+      0.3953,
+      0.0573
+    ],
+    "11": [
+      0.6945,
+      0.0766
+    ]
+  }
+}

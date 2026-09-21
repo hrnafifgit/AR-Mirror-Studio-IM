@@ -1,0 +1,19 @@
+{
+  "id": "hair_2",
+  "category": "hair",
+  "type": "hair",
+  "title": "قصة شعر عصرية #2",
+  "url": "things_assets/hair/hair_2.png",
+  "width": 650,
+  "height": 472,
+  "keypoints": {
+    "10": [
+      0.2023,
+      0.9078
+    ],
+    "9": [
+      0.8238,
+      0.8877
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "cap_1",
+  "category": "cap",
+  "type": "cap",
+  "title": "كوفية / قبعة راقية #1",
+  "url": "things_assets/cap/cap_1.png",
+  "width": 736,
+  "height": 736,
+  "keypoints": {
+    "5": [
+      0.2269,
+      0.4144
+    ],
+    "2": [
+      0.4049,
+      0.411
+    ]
+  }
+}

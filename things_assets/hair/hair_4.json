@@ -1,0 +1,19 @@
+{
+  "id": "hair_4",
+  "category": "hair",
+  "type": "hair",
+  "title": "Piv   Google Drive jpg",
+  "url": "things_assets/hair/hair_4.png",
+  "width": 350,
+  "height": 263,
+  "keypoints": {
+    "10": [
+      0.3043,
+      0.9411
+    ],
+    "9": [
+      0.8357,
+      0.8973
+    ]
+  }
+}

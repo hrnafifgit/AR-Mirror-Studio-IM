@@ -1,0 +1,19 @@
+{
+  "id": "suite_2",
+  "category": "suite",
+  "type": "suit",
+  "title": "Mens Wearing Suit Passport...",
+  "url": "things_assets/suite/suite_2.png",
+  "width": 360,
+  "height": 360,
+  "keypoints": {
+    "11": [
+      0.7097,
+      0.1847
+    ],
+    "12": [
+      0.2903,
+      0.2139
+    ]
+  }
+}

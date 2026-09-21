@@ -1,0 +1,19 @@
+{
+  "id": "maried_2",
+  "category": "maried",
+  "type": "maried",
+  "title": "bg removed png png",
+  "url": "things_assets/maried/maried_2.png",
+  "width": 564,
+  "height": 924,
+  "keypoints": {
+    "11": [
+      0.7615,
+      0.3772
+    ],
+    "12": [
+      0.2589,
+      0.3874
+    ]
+  }
+}

@@ -1,0 +1,572 @@
+/* ==========================================================================
+   VisionCraft Studio - AI Spatial Gesture UI & Floating Tool Shelf
+   ========================================================================== */
+
+/* 1. Laser Hand & Face Cursor */
+#handCursor {
+    position: fixed;
+    width: 34px;
+    height: 34px;
+    border: 2.5px solid #00e5ff;
+    background: rgba(0, 229, 255, 0.18);
+    border-radius: 50%;
+    pointer-events: none;
+    z-index: 99999;
+    transform: translate(-50%, -50%);
+    transition: width 0.12s ease, height 0.12s ease, border-color 0.15s ease, background 0.15s ease;
+    display: none;
+    box-shadow: 0 0 20px rgba(0, 229, 255, 0.7), inset 0 0 10px rgba(0, 229, 255, 0.4);
+}
+
+#handCursor::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 7px;
+    height: 7px;
+    background: #00e5ff;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 8px #fff;
+}
+
+/* Circular Progress Ring for Thumbs Up / Save Timer */
+#cursorProgressRing {
+    position: absolute;
+    top: -8px;
+    left: -8px;
+    width: calc(100% + 16px);
+    height: calc(100% + 16px);
+    transform: rotate(-90deg);
+    pointer-events: none;
+    display: none;
+}
+
+#cursorProgressRing circle {
+    stroke-dasharray: 100;
+    stroke-dashoffset: 100;
+    transition: stroke-dashoffset 0.04s linear;
+}
+
+/* Cursor State: Zooming */
+#handCursor.state-zoom {
+    border-color: #ffd600;
+    background: rgba(255, 214, 0, 0.22);
+    box-shadow: 0 0 24px rgba(255, 214, 0, 0.8);
+    width: 46px;
+    height: 46px;
+}
+#handCursor.state-zoom::after {
+    background: #ffd600;
+}
+
+/* Cursor State: Grabbing Tool */
+#handCursor.state-grab {
+    border-color: #ff007f;
+    background: rgba(255, 0, 127, 0.35);
+    box-shadow: 0 0 28px rgba(255, 0, 127, 0.9);
+    width: 48px;
+    height: 48px;
+    animation: pulseGrab 0.9s infinite alternate;
+}
+#handCursor.state-grab::after {
+    background: #ff007f;
+    width: 10px;
+    height: 10px;
+}
+
+/* Cursor State: Nose Pointer (Accessibility Mode) */
+#handCursor.state-nose {
+    border-color: #10b981;
+    background: rgba(16, 185, 129, 0.25);
+    box-shadow: 0 0 24px rgba(16, 185, 129, 0.85);
+    width: 32px;
+    height: 32px;
+}
+#handCursor.state-nose::after {
+    background: #10b981;
+}
+
+@keyframes pulseGrab {
+    0% { transform: translate(-50%, -50%) scale(1); }
+    100% { transform: translate(-50%, -50%) scale(1.15); }
+}
+
+/* Ghost Card attached to hand cursor during dragging */
+#handGrabGhost {
+    position: fixed;
+    pointer-events: none;
+    z-index: 99998;
+    display: none;
+    transform: translate(25px, 25px);
+    background: rgba(18, 22, 34, 0.94);
+    border: 1.5px solid #ff007f;
+    border-radius: 12px;
+    padding: 10px 18px;
+    color: #fff;
+    font-family: 'Segoe UI', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    box-shadow: 0 12px 35px rgba(255, 0, 127, 0.5), 0 0 20px rgba(0, 229, 255, 0.25);
+    backdrop-filter: blur(14px);
+    align-items: center;
+    gap: 12px;
+    animation: floatGhost 1.8s ease-in-out infinite alternate;
+}
+
+@keyframes floatGhost {
+    0% { transform: translate(25px, 25px); }
+    100% { transform: translate(25px, 20px); }
+}
+
+#handGrabGhost .ghost-icon {
+    font-size: 22px;
+}
+
+#handGrabGhost .ghost-hint {
+    font-size: 10px;
+    color: #ff80bf;
+    display: block;
+    margin-top: 3px;
+}
+
+/* 2. Floating Virtual Tool Shelf & AR Studio */
+#gestureToolShelf {
+    position: fixed;
+    right: 280px;
+    top: 85px;
+    z-index: 9000;
+    background: rgba(15, 20, 32, 0.88);
+    border: 1px solid rgba(0, 229, 255, 0.35);
+    border-radius: 14px;
+    padding: 12px 10px;
+    backdrop-filter: blur(18px);
+    box-shadow: 0 14px 45px rgba(0, 0, 0, 0.7), 0 0 25px rgba(0, 229, 255, 0.2);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 195px;
+    user-select: none;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+#gestureToolShelf.shelf-hidden {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateX(50px);
+}
+
+.shelf-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 4px 6px 4px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    font-size: 11px;
+    font-weight: 700;
+    color: #00e5ff;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
+/* Shelf Mode Switcher (Hand vs Nose Pointer) */
+.shelf-mode-selector {
+    display: flex;
+    gap: 4px;
+    background: rgba(0, 0, 0, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 3px;
+    margin-bottom: 4px;
+}
+
+.shelf-mode-btn {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: #94a3b8;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 4px 6px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: center;
+}
+
+.shelf-mode-btn.active {
+    background: rgba(0, 229, 255, 0.18);
+    color: #00e5ff;
+    box-shadow: 0 0 8px rgba(0, 229, 255, 0.3);
+}
+
+/* Shelf Category Tabs (DIP Filters vs AR Try-On Studio) */
+.shelf-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 4px;
+}
+
+.shelf-tab-btn {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: #94a3b8;
+    border-radius: 6px;
+    padding: 5px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: center;
+}
+
+.shelf-tab-btn.active {
+    background: linear-gradient(135deg, rgba(0, 229, 255, 0.2), rgba(121, 40, 202, 0.2));
+    border-color: #00e5ff;
+    color: #fff;
+    box-shadow: 0 0 10px rgba(0, 229, 255, 0.3);
+}
+
+.shelf-items-list {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    max-height: calc(100vh - 310px);
+    overflow-y: auto;
+    padding-right: 2px;
+}
+
+.shelf-items-list::-webkit-scrollbar {
+    width: 4px;
+}
+.shelf-items-list::-webkit-scrollbar-thumb {
+    background: rgba(0, 229, 255, 0.3);
+    border-radius: 4px;
+}
+
+.shelf-card {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 8px;
+    padding: 7px 10px;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    color: #e0e6ed;
+}
+
+.shelf-card:hover, .shelf-card.hand-hover {
+    background: rgba(0, 229, 255, 0.14);
+    border-color: #00e5ff;
+    transform: translateX(-4px) scale(1.02);
+    box-shadow: 0 4px 16px rgba(0, 229, 255, 0.28);
+}
+
+.shelf-card.hand-hover::after {
+    content: '🤏 Pinch';
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 9px;
+    background: #ff007f;
+    color: #fff;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-weight: bold;
+    animation: bounceGrab 0.6s infinite alternate;
+}
+
+@keyframes bounceGrab {
+    0% { transform: translateY(-50%) scale(0.9); }
+    100% { transform: translateY(-50%) scale(1.05); }
+}
+
+.shelf-card.is-being-dragged {
+    opacity: 0.35;
+    border-style: dashed;
+    border-color: #ff007f;
+}
+
+.shelf-card-icon {
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: rgba(0, 229, 255, 0.1);
+    flex-shrink: 0;
+}
+
+.shelf-card-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.shelf-card-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: #fff;
+    line-height: 1.2;
+}
+
+.shelf-card-sub {
+    font-size: 9px;
+    color: #94a3b8;
+    margin-top: 1px;
+}
+
+/* 3. PiP Webcam HUD & Tracking Monitor */
+#gesturePipContainer {
+    position: fixed;
+    bottom: 25px;
+    left: 70px;
+    width: 235px;
+    height: 180px;
+    background: rgba(13, 17, 26, 0.92);
+    border: 1.5px solid rgba(0, 229, 255, 0.45);
+    border-radius: 12px;
+    overflow: hidden;
+    z-index: 9500;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.75), 0 0 25px rgba(0, 229, 255, 0.25);
+    backdrop-filter: blur(14px);
+    display: none;
+    flex-direction: column;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+#gesturePipContainer.pip-minimized {
+    height: 38px;
+    width: 185px;
+}
+
+.pip-header {
+    height: 32px;
+    background: rgba(22, 27, 46, 0.98);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 10px;
+    border-bottom: 1px solid rgba(0, 229, 255, 0.25);
+    font-size: 11px;
+    font-weight: 600;
+    color: #00e5ff;
+}
+
+.pip-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #10b981;
+    display: inline-block;
+    margin-right: 6px;
+    box-shadow: 0 0 8px #10b981;
+}
+
+.pip-status-dot.no-hand {
+    background: #f59e0b;
+    box-shadow: 0 0 8px #f59e0b;
+}
+
+.pip-ws-badge {
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: rgba(16, 185, 129, 0.2);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.4);
+    margin-left: 6px;
+}
+
+.pip-body {
+    position: relative;
+    flex: 1;
+    background: #000;
+}
+
+#gestureVideo {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1);
+    opacity: 0.65;
+}
+
+#gestureSkeletonCanvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    transform: scaleX(-1);
+}
+
+.pip-feedback-badge {
+    position: absolute;
+    bottom: 6px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.88);
+    border: 1px solid #00e5ff;
+    color: #00e5ff;
+    padding: 3px 12px;
+    border-radius: 20px;
+    font-size: 10px;
+    font-weight: bold;
+    letter-spacing: 0.5px;
+    white-space: nowrap;
+    text-shadow: 0 0 8px #00e5ff;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6);
+}
+
+/* 4. Drop Zone Glow on Image Canvas */
+.doc-frame-drop-active {
+    outline: 3px dashed #ff007f !important;
+    outline-offset: 6px;
+    box-shadow: 0 0 50px rgba(255, 0, 127, 0.5) !important;
+    animation: dropPulse 0.8s infinite alternate !important;
+}
+
+@keyframes dropPulse {
+    0% { outline-color: #ff007f; }
+    100% { outline-color: #00e5ff; }
+}
+
+/* Ripple effect on image drop */
+.gesture-drop-ripple {
+    position: absolute;
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    animation: rippleExpand 0.75s cubic-bezier(0.1, 0.8, 0.3, 1) forwards;
+    z-index: 500;
+}
+
+@keyframes rippleExpand {
+    0% {
+        width: 10px;
+        height: 10px;
+        border: 3px solid #ff007f;
+        background: rgba(255, 0, 127, 0.4);
+        opacity: 1;
+    }
+    100% {
+        width: 550px;
+        height: 550px;
+        border: 2px solid #00e5ff;
+        background: rgba(0, 229, 255, 0);
+        opacity: 0;
+    }
+}
+
+/* Air Gestures Active Top Button Glow */
+#btnToggleGestures.active {
+    background: linear-gradient(135deg, #00e5ff, #0070f3) !important;
+    border-color: #00e5ff !important;
+    color: #fff !important;
+    box-shadow: 0 0 16px rgba(0, 229, 255, 0.8);
+    animation: pulseActive 2s infinite alternate;
+}
+
+@keyframes pulseActive {
+    0% { box-shadow: 0 0 8px rgba(0, 229, 255, 0.4); }
+    100% { box-shadow: 0 0 22px rgba(0, 229, 255, 0.9); }
+}
+
+/* ==========================================================================
+   5. Full AR Smart Mirror Studio Overlay & HUD (غرفة المراية التفاعلية)
+   ========================================================================== */
+#arMirrorContainer {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: #0b0e17;
+    z-index: 99990;
+    display: none;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    overflow: hidden;
+    backdrop-filter: blur(10px);
+}
+
+#arMirrorCanvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.mirror-top-hud {
+    position: absolute;
+    top: 20px;
+    right: 30px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    z-index: 99995;
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(14px);
+    padding: 8px 18px;
+    border-radius: 30px;
+    border: 1px solid rgba(0, 229, 255, 0.35);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+}
+
+.mirror-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #00e5ff;
+    font-size: 13px;
+    font-weight: 600;
+    padding-right: 12px;
+    border-right: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.mirror-pulse-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #10b981;
+    box-shadow: 0 0 10px #10b981;
+    animation: pulseMirrorDot 1.5s infinite;
+}
+
+@keyframes pulseMirrorDot {
+    0% { transform: scale(0.9); opacity: 0.7; }
+    50% { transform: scale(1.2); opacity: 1; box-shadow: 0 0 16px #10b981; }
+    100% { transform: scale(0.9); opacity: 0.7; }
+}
+
+.mirror-instructions-hud {
+    position: absolute;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(15, 23, 42, 0.88);
+    backdrop-filter: blur(14px);
+    padding: 10px 24px;
+    border-radius: 25px;
+    border: 1px solid rgba(0, 229, 255, 0.25);
+    color: #e2e8f0;
+    font-size: 13px;
+    z-index: 99995;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+    text-align: center;
+    pointer-events: none;
+    max-width: 90%;
+}
+

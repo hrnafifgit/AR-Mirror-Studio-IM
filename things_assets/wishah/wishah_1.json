@@ -1,0 +1,19 @@
+{
+  "id": "wishah_1",
+  "category": "wishah",
+  "type": "wishah",
+  "title": "bg removed png png",
+  "url": "things_assets/wishah/wishah_1.png",
+  "width": 626,
+  "height": 1000,
+  "keypoints": {
+    "11": [
+      0.9768,
+      0.177
+    ],
+    "12": [
+      0.0,
+      0.1775
+    ]
+  }
+}

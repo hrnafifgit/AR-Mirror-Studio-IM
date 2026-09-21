@@ -1,0 +1,1530 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+"""
+================================================================================
+VisionCraft - Standalone AR Smart Mirror & Try-On Studio (Python Native)
+================================================================================
+غرفة المراية الافتراضية الذكية وتجربة الملابس التفاعلية بالبايثون
+* نفس التصميم الأصلي الأنيق مع أرفف مكانية جانبية وقوائم منسدلة
+* خط عربي أصيل ورسم زجاجي فائق الجودة (Glassmorphism & Neon Glow)
+* أزرار وقوائم تفاعلية بالنقر بالفأرة (Mouse Click & Hover)
+* تتبع الوجه والجسم واليدين في الوقت الحقيقي (Realtime 60 FPS)
+* تجربة وتركيب البدلات والأزياء والنظارات والقبعات بدقة تشريحية
+* دعم الكاميرا المزدوجة (Laptop Cam + IP Cam)
+================================================================================
+"""
+
+import sys
+import os
+import time
+import math
+import json
+import argparse
+from pathlib import Path
+import cv2
+import numpy as np
+from PIL import Image, ImageDraw, ImageFont
+
+# Arabic text shaping
+try:
+    import arabic_reshaper
+    from bidi.algorithm import get_display
+    HAS_BIDI = True
+except ImportError:
+    HAS_BIDI = False
+
+# Ensure UTF-8 output on Windows consoles
+if sys.platform.startswith("win"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+# Paths
+BASE_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(BASE_DIR))
+SNAPSHOTS_DIR = BASE_DIR / "snapshots"
+SNAPSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+CATALOG_PATH = BASE_DIR / "things_assets" / "catalog.json"
+THINGS_DIR = BASE_DIR / "things_assets"
+MODELS_DIR = BASE_DIR / "models"
+
+# Fonts
+FONT_PATH_REG = r"C:\Windows\Fonts\segoeui.ttf" if os.path.exists(r"C:\Windows\Fonts\segoeui.ttf") else "arial.ttf"
+FONT_PATH_BOLD = r"C:\Windows\Fonts\segoeuib.ttf" if os.path.exists(r"C:\Windows\Fonts\segoeuib.ttf") else FONT_PATH_REG
+
+try:
+    FONT_TITLE = ImageFont.truetype(FONT_PATH_BOLD, 17)
+    FONT_SHELF_TITLE = ImageFont.truetype(FONT_PATH_BOLD, 14)
+    FONT_SHELF_SUB = ImageFont.truetype(FONT_PATH_REG, 11)
+    FONT_BTN = ImageFont.truetype(FONT_PATH_BOLD, 13)
+    FONT_ITEM = ImageFont.truetype(FONT_PATH_BOLD, 12)
+    FONT_HUD = ImageFont.truetype(FONT_PATH_REG, 12)
+except Exception:
+    FONT_TITLE = FONT_SHELF_TITLE = FONT_SHELF_SUB = FONT_BTN = FONT_ITEM = FONT_HUD = ImageFont.load_default()
+
+# MediaPipe modern Tasks Vision API
+HAS_MEDIAPIPE = False
+try:
+    import mediapipe as mp
+    from mediapipe.tasks.python import vision
+    from mediapipe.tasks import python as mp_python
+    HAS_MEDIAPIPE = True
+except ImportError:
+    pass
+
+
+def get_lmk(lmk_container, idx):
+    if lmk_container is None:
+        return None
+    try:
+        if hasattr(lmk_container, "landmark"):
+            return lmk_container.landmark[idx]
+        return lmk_container[idx]
+    except (IndexError, KeyError):
+        return None
+
+
+def format_ar_text(text):
+    if not HAS_BIDI or not text:
+        return text
+    try:
+        reshaped = arabic_reshaper.reshape(text)
+        return get_display(reshaped)
+    except Exception:
+        return text
+
+
+# MediaPipe Hand Skeletal Connections (21 Landmarks)
+HAND_CONNECTIONS = [
+    (0, 1), (1, 2), (2, 3), (3, 4),        # Thumb
+    (0, 5), (5, 6), (6, 7), (7, 8),        # Index
+    (5, 9), (9, 10), (10, 11), (11, 12),   # Middle
+    (9, 13), (13, 14), (14, 15), (15, 16), # Ring
+    (13, 17), (17, 18), (18, 19), (19, 20),# Pinky
+    (0, 17)                                # Palm base
+]
+
+
+class ARStudioEngine:
+    def __init__(self, ipcam_url="http://192.168.8.106:8080/video"):
+        self.ipcam_url = ipcam_url
+        self.camera_source = "local"
+        self.cap = None
+        self.window_name = "VisionCraft AR Smart Mirror & Try-On Studio (Python Native)"
+
+        # Load catalog
+        self.catalog = self._load_catalog()
+        
+        # 3-Wall Room Categories mapped to the 3 Virtual Walls:
+        # 1. Left Wall (الجدار الأيسر): الأوشحة، تراكيب الشعر، الأقنعة والكمامات
+        # 2. Center Wall (الجدار الأوسط): خزانة البدلات، فساتين المناسبات، أزياء التخرج
+        # 3. Right Wall (الجدار الأيمن): رف النظارات، الكوافي والقبعات
+        self.shelf_categories = [
+            # الجدار الأيسر (Left Wall)
+            {"id": "wishah", "title": "رف الأوشحة الملكية", "icon": "🧣", "wall": "left", "shelf": "left", "y": 95, "count": 10, "color": (0, 229, 255)},
+            {"id": "hair", "title": "تراكيب وتسريحات الشعر", "icon": "💇", "wall": "left", "shelf": "left", "y": 165, "count": 4, "color": (0, 229, 255)},
+            {"id": "mask", "title": "الأقنعة والكمامات", "icon": "😷", "wall": "left", "shelf": "left", "y": 235, "count": 3, "color": (0, 229, 255)},
+
+            # الجدار الأوسط (Center Wall - Main Wardrobe)
+            {"id": "suite", "title": "علاقة البدلات الفاخرة", "icon": "👔", "wall": "center", "shelf": "center", "y": 95, "count": 11, "color": (255, 200, 0)},
+            {"id": "maried", "title": "أزياء وفساتين المناسبات", "icon": "👰", "wall": "center", "shelf": "center", "y": 165, "count": 10, "color": (255, 200, 0)},
+            {"id": "graduition", "title": "أزياء وأرواب التخرج", "icon": "🎓", "wall": "center", "shelf": "center", "y": 235, "count": 2, "color": (255, 200, 0)},
+
+            # الجدار الأيمن (Right Wall)
+            {"id": "glasses", "title": "رف النظارات الفاخرة", "icon": "👓", "wall": "right", "shelf": "right", "y": 95, "count": 8, "color": (255, 0, 127)},
+            {"id": "cap", "title": "الكوافي والقبعات الأنيقة", "icon": "🧢", "wall": "right", "shelf": "right", "y": 165, "count": 5, "color": (255, 0, 127)}
+        ]
+
+        self.open_drawer = "suite"  # Default open category drawer
+        self.drawer_scroll_idx = 0
+        self.clickable_regions = []  # List of {"rect": (x1, y1, x2, y2), "action": fn}
+
+        # Cache of loaded images & thumbnails
+        self.asset_cache = {}
+        self.thumb_cache = {}
+
+        # Worn items state
+        self.worn_items = {
+            "suite": None,
+            "maried": None,
+            "glasses": None,
+            "cap": None,
+            "hair": None,
+            "wishah": None,
+            "mask": None,
+            "graduition": None
+        }
+
+        # Fine-tuning for suit
+        self.suit_scale = 1.0
+        self.suit_shift_y = 0
+
+        # UI state
+        self.show_landmarks = False
+        self.show_hud = True
+        self.is_fullscreen = False
+        self.toast_message = "مرحباً بك في استوديو المراية الذكية ثلاثية الجدران! 🪞🏡✨"
+        self.toast_timer = time.time() + 4.0
+        self.flash_alpha = 0.0
+
+        # Motion smoothing cache
+        self.smooth_anchors = {}
+        self.last_gesture_time = 0
+
+        # Hand Gesture Tracking State
+        self.enable_gestures = True
+        self.hand_cursor = {
+            "x": 640,
+            "y": 360,
+            "is_visible": False,
+            "is_pointing": False,
+            "is_pinching": False,
+            "pinch_ratio": 1.0,
+            "last_seen": 0
+        }
+        self.prev_pinching = False
+        self.last_reach_time = 0
+        self.last_pinch_time = 0
+        self.ripples = []  # List of [x, y, radius, alpha]
+
+        # 3-Wall Virtual Dressing Room & Continuous Head/Gaze Yaw Tracking
+        self.smooth_yaw = 0.0          # Normalized continuous yaw [-1.0: Left Wall, 0.0: Center Wall, +1.0: Right Wall]
+        self.raw_yaw = 0.0
+        self.yaw_calibration_offset = 0.0
+        self.target_yaw_override = None # For clicking a wall tab to smoothly steer view
+        self.active_wall = "center"     # "left", "center", "right"
+        self.bg_panorama = None
+
+        # Virtual Background & Real-Time Segmentation
+        self.image_segmenter = None
+        self.bg_mode = "wall"  # "wall" (3-Wall Panoramic Room), "blur" (studio bokeh), "none" (real camera)
+        self.bg_modes_list = ["wall", "blur", "none"]
+        self.bg_wall_raw = None
+        self.bg_wall_cached = None
+        self.prev_seg_mask = None
+        self._load_background_assets()
+
+        # MediaPipe Tasks Landmarkers
+        self.face_landmarker = None
+        self.pose_landmarker = None
+        self.hand_landmarker = None
+        self._init_mediapipe_tasks()
+
+        # Preload catalog assets & thumbnails
+        self._preload_assets()
+
+        # Interactive Spatial Image Map on Walls (خريطة النقاط المكانية التفاعلية على الجدران)
+        self.current_pano_offset_x = 0
+        self.current_pano_scale_x = 1.0
+        self.current_pano_scale_y = 1.0
+        self.spatial_hotspots = []
+        self._init_spatial_hotspots()
+
+    def _init_spatial_hotspots(self):
+        # Interactive Spatial Image Map on the 3 Walls (Panorama: 3600 x 720)
+        # Right Wall (glasses, cap): X in [2400, 3600]
+        # Center Wall (suits, dresses, graduation): X in [1200, 2400]
+        # Left Wall (scarves, hairstyles, masks): X in [0, 1200]
+        self.spatial_hotspots = [
+            # -----------------------------------------------------------------
+            # الجدار الأيمن: رف القبعات والكوافي (Top Shelf: Caps & Hats)
+            # -----------------------------------------------------------------
+            {"id": "cap_1", "cat": "cap", "title": "قبعة أنيقة #1", "icon": "🧢", "wall": "right", "rect": (2610, 195, 2750, 320), "color": (255, 0, 127)},
+            {"id": "cap_2", "cat": "cap", "title": "قبعة كلاسيكية #2", "icon": "🧢", "wall": "right", "rect": (2780, 195, 2920, 320), "color": (255, 0, 127)},
+            {"id": "cap_3", "cat": "cap", "title": "كاب رياضي #3", "icon": "🧢", "wall": "right", "rect": (2950, 195, 3090, 320), "color": (255, 0, 127)},
+            {"id": "cap_4", "cat": "cap", "title": "قبعة شتوية #4", "icon": "🧢", "wall": "right", "rect": (3120, 195, 3260, 320), "color": (255, 0, 127)},
+            {"id": "cap_5", "cat": "cap", "title": "قبعة سوداء فاخرة #5", "icon": "🧢", "wall": "right", "rect": (3290, 195, 3430, 320), "color": (255, 0, 127)},
+
+            # -----------------------------------------------------------------
+            # الجدار الأيمن: رف النظارات الفاخرة (Middle Shelf: Designer Eyewear)
+            # -----------------------------------------------------------------
+            {"id": "glasses_1", "cat": "glasses", "title": "نظارة شمسية فاخرة #1", "icon": "👓", "wall": "right", "rect": (2610, 365, 2750, 480), "color": (0, 229, 255)},
+            {"id": "glasses_2", "cat": "glasses", "title": "نظارة شمسية كلاسيك #2", "icon": "👓", "wall": "right", "rect": (2780, 365, 2920, 480), "color": (0, 229, 255)},
+            {"id": "glasses_3", "cat": "glasses", "title": "نظارة أفياتور ذهبية #3", "icon": "👓", "wall": "right", "rect": (2950, 365, 3090, 480), "color": (0, 229, 255)},
+            {"id": "glasses_4", "cat": "glasses", "title": "نظارة سوداء داكنة #4", "icon": "👓", "wall": "right", "rect": (3120, 365, 3260, 480), "color": (0, 229, 255)},
+            {"id": "glasses_5", "cat": "glasses", "title": "نظارة عصرية راقية #5", "icon": "👓", "wall": "right", "rect": (3290, 365, 3430, 480), "color": (0, 229, 255)},
+
+            # -----------------------------------------------------------------
+            # الجدار الأوسط: خزانة الملابس والبدلات المعلقة (Center Wardrobe)
+            # -----------------------------------------------------------------
+            {"id": "suite_1", "cat": "suite", "title": "بدلة كحلية رسمية #1", "icon": "👔", "wall": "center", "rect": (1370, 190, 1490, 520), "color": (255, 200, 0)},
+            {"id": "suite_2", "cat": "suite", "title": "بدلة أعمال سوداء #2", "icon": "👔", "wall": "center", "rect": (1510, 190, 1630, 520), "color": (255, 200, 0)},
+            {"id": "suite_3", "cat": "suite", "title": "بدلة تاكسيدو رسمية #3", "icon": "👔", "wall": "center", "rect": (1650, 190, 1770, 520), "color": (255, 200, 0)},
+            {"id": "graduition_1", "cat": "graduition", "title": "روب التخرج الأكاديمي", "icon": "🎓", "wall": "center", "rect": (1790, 190, 1910, 520), "color": (255, 200, 0)},
+            {"id": "suite_4", "cat": "suite", "title": "بدلة عصرية رمادية #4", "icon": "👔", "wall": "center", "rect": (1930, 190, 2050, 520), "color": (255, 200, 0)},
+            {"id": "maried_1", "cat": "maried", "title": "فستان زفاف ملكي #1", "icon": "👰", "wall": "center", "rect": (2070, 190, 2190, 520), "color": (255, 200, 0)},
+            {"id": "maried_2", "cat": "maried", "title": "فستان سهرة راقي #2", "icon": "👰", "wall": "center", "rect": (2210, 190, 2330, 520), "color": (255, 200, 0)},
+
+            # -----------------------------------------------------------------
+            # الجدار الأيسر: رفوف الأوشحة وتراكيب الشعر (Left Vanity Wall)
+            # -----------------------------------------------------------------
+            {"id": "hair_1", "cat": "hair", "title": "تسريحة شعر أنيقة #1", "icon": "💇", "wall": "left", "rect": (340, 210, 470, 350), "color": (0, 229, 255)},
+            {"id": "hair_2", "cat": "hair", "title": "تسريحة شعر كلاسيك #2", "icon": "💇", "wall": "left", "rect": (500, 210, 630, 350), "color": (0, 229, 255)},
+            {"id": "hair_3", "cat": "hair", "title": "تسريحة شعر عصرية #3", "icon": "💇", "wall": "left", "rect": (660, 210, 790, 350), "color": (0, 229, 255)},
+            {"id": "hair_4", "cat": "hair", "title": "تسريحة شعر مميزة #4", "icon": "💇", "wall": "left", "rect": (820, 210, 950, 350), "color": (0, 229, 255)},
+
+            {"id": "wishah_1", "cat": "wishah", "title": "وشاح حريري فاخر #1", "icon": "🧣", "wall": "left", "rect": (380, 380, 530, 510), "color": (0, 229, 255)},
+            {"id": "wishah_2", "cat": "wishah", "title": "شال كشميري ملكي #2", "icon": "🧣", "wall": "left", "rect": (570, 380, 720, 510), "color": (0, 229, 255)},
+            {"id": "mask_1", "cat": "mask", "title": "شماغ وقناع كوفية أصيل", "icon": "😷", "wall": "left", "rect": (760, 380, 900, 510), "color": (0, 229, 255)}
+        ]
+
+        # Link each hotspot to its full catalog item object
+        for hs in self.spatial_hotspots:
+            cat_id = hs["cat"]
+            it_id = hs["id"]
+            matched_item = None
+            if cat_id in self.catalog:
+                for item in self.catalog[cat_id].get("items", []):
+                    if item.get("id") == it_id:
+                        matched_item = item
+                        break
+            hs["item_obj"] = matched_item
+        print(f"[+] تم تفعيل خريطة التفاعل المباشر مع عناصر الجدران (Spatial Hotspots: {len(self.spatial_hotspots)} قطعة)! 🖼️👌✨")
+
+    def _load_background_assets(self):
+        pano_path = THINGS_DIR / "backgrounds" / "panorama_room_3840.jpg"
+        if pano_path.exists():
+            try:
+                with open(pano_path, "rb") as f:
+                    nparr = np.frombuffer(f.read(), np.uint8)
+                    self.bg_panorama = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+                    print(f"[+] تم تحميل بانوراما الغرفة الافتراضية ثلاثية الجدران ({self.bg_panorama.shape}) بنجاح! 🏡🪞✨")
+            except Exception as e:
+                print(f"[!] Panorama load error: {e}")
+
+        wall_path = THINGS_DIR / "backgrounds" / "house_wall.jpg"
+        if wall_path.exists():
+            try:
+                with open(wall_path, "rb") as f:
+                    nparr = np.frombuffer(f.read(), np.uint8)
+                    self.bg_wall_raw = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            except Exception as e:
+                print(f"[!] Background load error: {e}")
+
+    def _init_mediapipe_tasks(self):
+        if not HAS_MEDIAPIPE:
+            return
+
+        face_task_path = MODELS_DIR / "face_landmarker.task"
+        pose_task_path = MODELS_DIR / "pose_landmarker.task"
+        hand_task_path = MODELS_DIR / "hand_landmarker.task"
+        seg_task_path = MODELS_DIR / "selfie_segmenter.tflite"
+
+        if face_task_path.exists():
+            try:
+                base_opts = mp_python.BaseOptions(model_asset_path=str(face_task_path))
+                opts = vision.FaceLandmarkerOptions(
+                    base_options=base_opts,
+                    running_mode=vision.RunningMode.IMAGE,
+                    num_faces=1
+                )
+                self.face_landmarker = vision.FaceLandmarker.create_from_options(opts)
+            except Exception as e:
+                print(f"[!] FaceLandmarker init error: {e}")
+
+        if pose_task_path.exists():
+            try:
+                base_opts = mp_python.BaseOptions(model_asset_path=str(pose_task_path))
+                opts = vision.PoseLandmarkerOptions(
+                    base_options=base_opts,
+                    running_mode=vision.RunningMode.IMAGE
+                )
+                self.pose_landmarker = vision.PoseLandmarker.create_from_options(opts)
+            except Exception as e:
+                print(f"[!] PoseLandmarker init error: {e}")
+
+        if hand_task_path.exists():
+            try:
+                base_opts = mp_python.BaseOptions(model_asset_path=str(hand_task_path))
+                opts = vision.HandLandmarkerOptions(
+                    base_options=base_opts,
+                    running_mode=vision.RunningMode.IMAGE,
+                    num_hands=2,
+                    min_hand_detection_confidence=0.5,
+                    min_hand_presence_confidence=0.5,
+                    min_tracking_confidence=0.5
+                )
+                self.hand_landmarker = vision.HandLandmarker.create_from_options(opts)
+                print("[+] تم تفعيل وتجهيز محرك إيماءات اليد والأصابع (Hand Landmarker) بنجاح!")
+            except Exception as e:
+                print(f"[!] HandLandmarker init error: {e}")
+
+        if seg_task_path.exists():
+            try:
+                base_opts = mp_python.BaseOptions(model_asset_path=str(seg_task_path))
+                opts = vision.ImageSegmenterOptions(
+                    base_options=base_opts,
+                    running_mode=vision.RunningMode.IMAGE,
+                    output_category_mask=False,
+                    output_confidence_masks=True
+                )
+                self.image_segmenter = vision.ImageSegmenter.create_from_options(opts)
+                print("[+] تم تفعيل وتجهيز عازل الخلفية الذكي (Selfie Segmenter) بنجاح! 🪄")
+            except Exception as e:
+                print(f"[!] ImageSegmenter init error: {e}")
+
+    def _load_catalog(self):
+        if CATALOG_PATH.exists():
+            try:
+                with open(CATALOG_PATH, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"[!] Error reading catalog: {e}")
+        return {}
+
+    def _preload_assets(self):
+        print("[*] جاري تجهيز أيقونات وملابس الاستوديو في الذاكرة...")
+        count = 0
+        for cat_key, cat_data in self.catalog.items():
+            for item in cat_data.get("items", []):
+                self._load_item_image(item)
+                count += 1
+        print(f"[+] تم تجهيز {count} قطعة ملابس وأكسسوار بنجاح!")
+
+    def _load_item_image(self, item):
+        item_id = item.get("id")
+        if item_id in self.asset_cache:
+            return self.asset_cache[item_id]
+
+        rel_url = item.get("url", "")
+        img_path = THINGS_DIR / rel_url.replace("things_assets/", "")
+        if not img_path.exists():
+            for p in THINGS_DIR.rglob(Path(rel_url).name):
+                img_path = p
+                break
+
+        if img_path.exists():
+            # Ensure keypoints from individual JSON file are always loaded
+            json_candidate = img_path.with_suffix(".json")
+            if json_candidate.exists() and ("keypoints" not in item or not item["keypoints"]):
+                try:
+                    with open(json_candidate, "r", encoding="utf-8") as jf:
+                        jdata = json.load(jf)
+                        if "keypoints" in jdata:
+                            item["keypoints"] = jdata["keypoints"]
+                except Exception:
+                    pass
+
+            try:
+                with open(img_path, "rb") as f:
+                    nparr = np.frombuffer(f.read(), np.uint8)
+                    img = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
+                    if img is not None:
+                        if img.shape[2] == 3:
+                            img = cv2.cvtColor(img, cv2.COLOR_BGR2BGRA)
+                        self.asset_cache[item_id] = img
+                        # Generate 46x46 thumbnail
+                        thumb = cv2.resize(img, (46, 46), interpolation=cv2.INTER_AREA)
+                        self.thumb_cache[item_id] = thumb
+                        return img
+            except Exception:
+                pass
+        return None
+
+    def start_camera(self, source="local"):
+        if self.cap is not None:
+            self.cap.release()
+
+        self.camera_source = source
+        if source == "local":
+            print("[*] جاري فتح كاميرا اللابتوب...")
+            self.cap = cv2.VideoCapture(0, cv2.CAP_DSHOW if sys.platform.startswith("win") else cv2.CAP_ANY)
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            self.cap.set(cv2.CAP_PROP_FPS, 60)
+            self.toast("تم تفعيل كاميرا الكمبيوتر 💻✨")
+        else:
+            print(f"[*] جاري الاتصال بكاميرا الجوال ({self.ipcam_url})...")
+            self.cap = cv2.VideoCapture(self.ipcam_url)
+            self.toast("تم تفعيل كاميرا الجوال اللاسلكية 📱✨")
+
+        if not self.cap.isOpened():
+            print(f"[!] تعذر فتح المصدر '{source}'. التحويل إلى كاميرا الكمبيوتر 0...")
+            self.cap = cv2.VideoCapture(0)
+            self.camera_source = "local"
+
+    def toggle_camera(self):
+        new_source = "ipcam" if self.camera_source == "local" else "local"
+        self.start_camera(new_source)
+
+    def toggle_gestures(self):
+        self.enable_gestures = not self.enable_gestures
+        st = "تفعيل" if self.enable_gestures else "تعطيل"
+        self.toast(f"تم {st} التحكم بإيماءات اليد والحركة 🖐️✨", 2.0)
+
+    def toggle_background(self):
+        cur_idx = self.bg_modes_list.index(self.bg_mode)
+        self.bg_mode = self.bg_modes_list[(cur_idx + 1) % len(self.bg_modes_list)]
+        if self.bg_mode == "wall":
+            self.toast("الخلفية: الغرفة الافتراضية ثلاثية الجدران 🏡🪞✨", 2.5)
+        elif self.bg_mode == "blur":
+            self.toast("الخلفية: عزل سينمائي ضبابي (Studio Blur) 🌫️✨", 2.5)
+        else:
+            self.toast("الخلفية: الكاميرا الواقعية الأصلية 📷", 2.5)
+
+    def look_at_wall(self, target_yaw):
+        self.target_yaw_override = target_yaw
+        if target_yaw < -0.2:
+            self.toast("التوجه نحو: الجدار الأيسر (الأوشحة وتراكيب الشعر) 🧣💇", 2.0)
+        elif target_yaw > 0.2:
+            self.toast("التوجه نحو: الجدار الأيمن (رف النظارات والقبعات) 👓🧢", 2.0)
+        else:
+            self.toast("التوجه نحو: الجدار الأوسط (خزانة الملابس والبدلات) 👔👰", 2.0)
+
+    def calibrate_center(self):
+        self.yaw_calibration_offset = self.raw_yaw
+        self.smooth_yaw = 0.0
+        self.toast("تمت معايرة وتثبيت زاوية النظر إلى المركز 🎯✨", 2.5)
+
+    def compute_head_and_gaze_yaw(self, face_lmks, fw, fh):
+        if not face_lmks:
+            # Gradually ease towards center if face temporarily lost
+            self.smooth_yaw = 0.95 * self.smooth_yaw
+            return self.smooth_yaw
+
+        nose = get_lmk(face_lmks, 1)
+        right_cheek = get_lmk(face_lmks, 234)
+        left_cheek = get_lmk(face_lmks, 454)
+
+        if not (nose and right_cheek and left_cheek):
+            return self.smooth_yaw
+
+        nx = nose.x * fw
+        rx = right_cheek.x * fw
+        lx = left_cheek.x * fw
+
+        # Ensure rx < lx
+        if rx > lx:
+            rx, lx = lx, rx
+
+        d_left = abs(lx - nx)
+        d_right = abs(nx - rx)
+
+        # In flipped (mirror) view:
+        # Looking right: nose moves to the right of the face (larger x), d_right increases, d_left decreases.
+        # So (d_right - d_left) > 0 (positive yaw, right wall).
+        # Looking left: nose moves left, (d_right - d_left) < 0 (negative yaw, left wall).
+        raw_head_yaw = (d_right - d_left) / max(1.0, d_left + d_right)
+
+        # Eye Gaze estimation using irises if available (FaceLandmarker indices 468 & 473)
+        gaze_offset = 0.0
+        r_iris = get_lmk(face_lmks, 468)
+        l_iris = get_lmk(face_lmks, 473)
+        r_eye_in = get_lmk(face_lmks, 133)
+        r_eye_out = get_lmk(face_lmks, 33)
+        l_eye_in = get_lmk(face_lmks, 362)
+        l_eye_out = get_lmk(face_lmks, 263)
+
+        if r_iris and l_iris and r_eye_in and r_eye_out and l_eye_in and l_eye_out:
+            r_c = (r_eye_in.x + r_eye_out.x) * 0.5 * fw
+            l_c = (l_eye_in.x + l_eye_out.x) * 0.5 * fw
+            r_w = max(1.0, abs(r_eye_out.x - r_eye_in.x) * fw)
+            l_w = max(1.0, abs(l_eye_out.x - l_eye_in.x) * fw)
+
+            r_dev = (r_iris.x * fw - r_c) / r_w
+            l_dev = (l_iris.x * fw - l_c) / l_w
+            gaze_offset = (r_dev + l_dev) * 0.5
+
+        # Weighted combination of head yaw (85%) and fine eye gaze (15%)
+        combined = raw_head_yaw * 0.85 + gaze_offset * 0.15 - self.yaw_calibration_offset
+        self.raw_yaw = combined
+
+        # 1. Expanded deadband for rock-solid center wall focus (kills micro-tremors)
+        if abs(combined) < 0.028:
+            target = 0.0
+        else:
+            # Smooth non-linear curve: comfortable 20-degree head turn smoothly views side walls
+            sign = 1.0 if combined > 0 else -1.0
+            norm_val = (abs(combined) - 0.028) / (1.0 - 0.028)
+            target = sign * float(np.clip((norm_val ** 0.92) * 2.8, 0.0, 1.0))
+
+        # 2. Handle smooth transition if user clicked a wall tab
+        if self.target_yaw_override is not None:
+            self.smooth_yaw = 0.88 * self.smooth_yaw + 0.12 * self.target_yaw_override
+            if abs(self.smooth_yaw - self.target_yaw_override) < 0.02:
+                self.target_yaw_override = None
+        else:
+            # 3. Adaptive Dual-Rate Kinetic Damping (Ultra-smooth & Jitter-free)
+            yaw_diff = abs(target - self.smooth_yaw)
+            if yaw_diff < 0.012:
+                # Sub-threshold tremor: freeze movement completely for a rock-steady view
+                alpha = 0.965
+            elif yaw_diff < 0.08:
+                # Subtle / gentle head movement: cinematic fluid glide
+                alpha = 0.91
+            else:
+                # Deliberate intentional head turn: responsive smooth glide
+                alpha = 0.83
+
+            self.smooth_yaw = alpha * self.smooth_yaw + (1.0 - alpha) * target
+
+        # Determine active wall name
+        if self.smooth_yaw < -0.22:
+            self.active_wall = "left"
+        elif self.smooth_yaw > 0.22:
+            self.active_wall = "right"
+        else:
+            self.active_wall = "center"
+
+        return self.smooth_yaw
+
+    def apply_virtual_background(self, frame, mp_img):
+        if self.bg_mode == "none" or self.image_segmenter is None:
+            return
+
+        fh, fw = frame.shape[:2]
+
+        try:
+            res_seg = self.image_segmenter.segment(mp_img)
+            if not res_seg or not res_seg.confidence_masks:
+                return
+
+            raw_mask = res_seg.confidence_masks[0].numpy_view()
+            if raw_mask.shape[:2] != (fh, fw):
+                raw_mask = cv2.resize(raw_mask, (fw, fh), interpolation=cv2.INTER_LINEAR)
+
+            # Temporal smoothing to prevent edge fluttering
+            if self.prev_seg_mask is None or self.prev_seg_mask.shape != (fh, fw):
+                self.prev_seg_mask = raw_mask.copy()
+            else:
+                self.prev_seg_mask = 0.65 * self.prev_seg_mask + 0.35 * raw_mask
+
+            smooth_mask = cv2.GaussianBlur(self.prev_seg_mask, (7, 7), 0)
+            mask_3c = np.repeat(smooth_mask[:, :, np.newaxis], 3, axis=2)
+
+            if self.bg_mode == "wall" and self.bg_panorama is not None:
+                # Continuous panoramic room background with smooth eye/head yaw panning
+                ph, pw = self.bg_panorama.shape[:2]
+                if ph != fh:
+                    scale = fh / float(ph)
+                    pano_w = int(pw * scale)
+                    scaled_pano = cv2.resize(self.bg_panorama, (pano_w, fh), interpolation=cv2.INTER_LINEAR)
+                else:
+                    scaled_pano = self.bg_panorama
+                    pano_w = pw
+
+                max_shift = max(0, pano_w - fw)
+                center_x = max_shift // 2
+
+                # Continuous proportional panning:
+                # yaw == -1.0 -> crop_x = 0 (Left Wall: Scarves, Hair, Masks)
+                # yaw == 0.0  -> crop_x = center_x (Center Wall: Suits, Wedding, Graduation)
+                # yaw == +1.0 -> crop_x = max_shift (Right Wall: Glasses, Caps)
+                crop_x = int(center_x + self.smooth_yaw * center_x)
+                crop_x = max(0, min(max_shift, crop_x))
+                self.current_pano_offset_x = crop_x
+                self.current_pano_scale_x = float(pano_w) / float(pw)
+                self.current_pano_scale_y = float(fh) / float(ph)
+
+                bg_target = scaled_pano[:, crop_x : crop_x + fw]
+                if bg_target.shape[1] != fw or bg_target.shape[0] != fh:
+                    bg_target = cv2.resize(bg_target, (fw, fh))
+
+            elif self.bg_mode == "wall" and self.bg_wall_raw is not None:
+                if self.bg_wall_cached is None or self.bg_wall_cached.shape[:2] != (fh, fw):
+                    self.bg_wall_cached = cv2.resize(self.bg_wall_raw, (fw, fh), interpolation=cv2.INTER_LINEAR)
+                bg_target = self.bg_wall_cached
+            elif self.bg_mode == "blur":
+                bg_target = cv2.GaussianBlur(frame, (51, 51), 0)
+            else:
+                return
+
+            # Blend person foreground with virtual background
+            fg_part = (frame * mask_3c).astype(np.float32)
+            bg_part = (bg_target * (1.0 - mask_3c)).astype(np.float32)
+            frame[:] = cv2.add(fg_part.astype(np.uint8), bg_part.astype(np.uint8))
+        except Exception:
+            pass
+
+    def toast(self, msg, duration=3.0):
+        self.toast_message = msg
+        self.toast_timer = time.time() + duration
+
+    def wear_item(self, cat_key, item):
+        slot = cat_key
+        item_title = item.get("title", "القطعة")
+
+        # 1. Un-wear if already wearing this exact item
+        if self.worn_items.get(slot) and self.worn_items[slot].get("id") == item.get("id"):
+            self.worn_items[slot] = None
+            self.toast(f"تم نزع: {item_title} ✕", 2.0)
+            return
+
+        # 2. WEDDING DRESS PROTOCOL (قواعد فستان العرس)
+        is_wearing_wedding_dress = (self.worn_items.get("maried") is not None)
+
+        if is_wearing_wedding_dress:
+            # Cannot wear caps or hats with wedding dresses (glasses only)
+            if slot in ["cap", "caps"]:
+                self.toast("لا يمكن ارتداء الكوفية مع فستان العرس (يصلح نظارة فقط)!", 3.0)
+                return
+            # Cannot wear heavy scarves or masks with wedding dresses
+            if slot in ["wishah", "mask"]:
+                self.toast("مع فستان العرس يصلح نظارة فقط لضمان تناسق المظهر!", 3.0)
+                return
+
+        # 3. BODY OUTFITS MUTUAL EXCLUSION (طبقة أزياء الجسم: بدلة / فستان عرس / روب تخرج)
+        if slot in ["suite", "maried", "graduition"]:
+            if slot == "maried":
+                # When wearing a wedding dress: remove any suit, graduation gown, caps, scarves, or masks
+                for b_slot in ["suite", "graduition"]:
+                    self.worn_items[b_slot] = None
+                for conf_slot in ["cap", "wishah", "mask"]:
+                    self.worn_items[conf_slot] = None
+
+                self.worn_items["maried"] = item
+                self.toast(f"تم ارتداء: {item_title} (يتوافق مع النظارات فقط) ✨", 3.0)
+                return
+            else:
+                # When wearing a suit or graduation gown: automatically replace any previous body outfit
+                for b_slot in ["suite", "maried", "graduition"]:
+                    if b_slot != slot:
+                        self.worn_items[b_slot] = None
+
+                self.worn_items[slot] = item
+                self.toast(f"تم ارتداء: {item_title} ✓✨", 2.5)
+                return
+
+        # 4. Standard Single-Item-Per-Slot (One cap at a time, one glasses at a time, etc.)
+        # Selecting another item in the same category seamlessly replaces the previous one
+        self.worn_items[slot] = item
+        self.toast(f"تم ارتداء: {item_title} ✓✨", 2.5)
+
+    def clear_all_worn(self):
+        for k in self.worn_items:
+            self.worn_items[k] = None
+        self.toast("تم نزع كافة الملابس والأكسسوارات 🔄")
+
+    def save_snapshot(self, frame):
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        filename = SNAPSHOTS_DIR / f"VisionCraft_AR_{ts}.png"
+        cv2.imwrite(str(filename), frame)
+        self.flash_alpha = 1.0
+        self.toast(f"تم حفظ الصورة: {filename.name} 💾🎉", 4.0)
+
+    # =========================================================================
+    # Mouse Click Handler
+    # =========================================================================
+    def on_mouse(self, event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            for reg in self.clickable_regions:
+                rx1, ry1, rx2, ry2 = reg["rect"]
+                if rx1 <= x <= rx2 and ry1 <= y <= ry2:
+                    reg["action"]()
+                    break
+
+    # =========================================================================
+    # Smoothing & Warping Math
+    # =========================================================================
+    def _smooth(self, cache_key, val, alpha=0.78):
+        if cache_key not in self.smooth_anchors or self.smooth_anchors[cache_key] is None:
+            self.smooth_anchors[cache_key] = val
+            return val
+        prev = self.smooth_anchors[cache_key]
+        diff = abs(val - prev)
+        if diff > 90:  # Fast reset if person moved significantly
+            self.smooth_anchors[cache_key] = val
+            return val
+        # Adaptive smoothing: hold micro-jitters (< 3.0 px) rock-steady
+        if diff < 3.0:
+            adapt_alpha = 0.95
+        elif diff < 14.0:
+            adapt_alpha = 0.85
+        else:
+            adapt_alpha = 0.65
+        smoothed = adapt_alpha * prev + (1.0 - adapt_alpha) * val
+        self.smooth_anchors[cache_key] = smoothed
+        return smoothed
+
+    def render_anchored_asset(self, frame, asset_img, kp1, kp2, dst1, dst2, cat_name, scale_mult=1.0, shift_y=0):
+        if asset_img is None or dst1 is None or dst2 is None:
+            return
+
+        nh, nw = asset_img.shape[:2]
+        p1x, p1y = kp1[0] * nw, kp1[1] * nh
+        p2x, p2y = kp2[0] * nw, kp2[1] * nh
+
+        # 1. Sort source anchor points left-to-right on the image
+        if p1x <= p2x:
+            plx, ply, prx, pry = p1x, p1y, p2x, p2y
+        else:
+            plx, ply, prx, pry = p2x, p2y, p1x, p1y
+
+        l_src = math.hypot(prx - plx, pry - ply)
+        if l_src < 2:
+            return
+
+        ang_src = math.atan2(pry - ply, prx - plx)
+        c_src_x, c_src_y = (plx + prx) / 2.0, (ply + pry) / 2.0
+
+        # 2. Sort target landmark points left-to-right on the person
+        if dst1[0] <= dst2[0]:
+            qlx, qly, qrx, qry = dst1[0], dst1[1], dst2[0], dst2[1]
+        else:
+            qlx, qly, qrx, qry = dst2[0], dst2[1], dst1[0], dst1[1]
+
+        # Motion smoothing
+        qlx = self._smooth(f"{cat_name}_qlx", qlx)
+        qly = self._smooth(f"{cat_name}_qly", qly)
+        qrx = self._smooth(f"{cat_name}_qrx", qrx)
+        qry = self._smooth(f"{cat_name}_qry", qry)
+
+        l_dst = math.hypot(qrx - qlx, qry - qly)
+        if l_dst < 2:
+            return
+
+        ang_dst = math.atan2(qry - qly, qrx - qlx)
+        c_dst_x = (qlx + qrx) / 2.0
+        c_dst_y = (qly + qry) / 2.0 + shift_y
+
+        # Angle difference (normalized to [-pi, pi])
+        delta_theta = ang_dst - ang_src
+        while delta_theta > math.pi:
+            delta_theta -= 2 * math.pi
+        while delta_theta < -math.pi:
+            delta_theta += 2 * math.pi
+
+        scale = (l_dst / l_src) * scale_mult
+
+        cos_t = math.cos(delta_theta) * scale
+        sin_t = math.sin(delta_theta) * scale
+
+        tx = c_dst_x - (cos_t * c_src_x - sin_t * c_src_y)
+        ty = c_dst_y - (sin_t * c_src_x + cos_t * c_src_y)
+
+        M = np.array([[cos_t, -sin_t, tx], [sin_t, cos_t, ty]], dtype=np.float32)
+
+        fh, fw = frame.shape[:2]
+        warped = cv2.warpAffine(asset_img, M, (fw, fh), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=(0, 0, 0, 0))
+
+        # Fast ROI blending for high FPS
+        alpha_mask = warped[:, :, 3]
+        if np.any(alpha_mask > 0):
+            ys, xs = np.where(alpha_mask > 0)
+            y1, y2 = max(0, int(ys.min())), min(fh, int(ys.max()) + 1)
+            x1, x2 = max(0, int(xs.min())), min(fw, int(xs.max()) + 1)
+            if x2 > x1 and y2 > y1:
+                sub_a = (alpha_mask[y1:y2, x1:x2].astype(np.float32) / 255.0)[:, :, None]
+                sub_rgb = warped[y1:y2, x1:x2, :3]
+                frame[y1:y2, x1:x2] = (sub_a * sub_rgb + (1.0 - sub_a) * frame[y1:y2, x1:x2]).astype(np.uint8)
+
+    # =========================================================================
+    # Real-Time Garment Fitting (Adheres 100% to Image Label Keypoints)
+    # =========================================================================
+    def render_worn_items(self, frame, face_lmks, pose_lmks):
+        fh, fw = frame.shape[:2]
+
+        # Natural layering order (from body to outer accessories):
+        # 1. Suits & Dresses (Torso)
+        # 2. Scarf / Wishah (Neck)
+        # 3. Mask (Lower face)
+        # 4. Hair (Head)
+        # 5. Glasses (Eyes)
+        # 6. Cap / Graduation Hat (Top of head)
+        layer_order = ["suite", "maried", "wishah", "mask", "hair", "glasses", "cap", "graduition"]
+
+        for slot in layer_order:
+            item = self.worn_items.get(slot)
+            if not item:
+                continue
+
+            kps = item.get("keypoints", {})
+            if not kps:
+                continue
+
+            img = self._load_item_image(item)
+            if img is None:
+                continue
+
+            dst1 = None
+            dst2 = None
+            src1 = None
+            src2 = None
+
+            # -----------------------------------------------------------------
+            # 1. Shoulder Items: Keys "11" & "12" (suite, maried, wishah)
+            # -----------------------------------------------------------------
+            if "11" in kps and "12" in kps:
+                src1 = kps["11"]
+                src2 = kps["12"]
+                if pose_lmks:
+                    ls = get_lmk(pose_lmks, 11)  # Left Shoulder
+                    rs = get_lmk(pose_lmks, 12)  # Right Shoulder
+                    if ls and rs and (getattr(ls, 'visibility', 1.0) > 0.25) and (getattr(rs, 'visibility', 1.0) > 0.25):
+                        dst1 = (ls.x * fw, ls.y * fh)
+                        dst2 = (rs.x * fw, rs.y * fh)
+
+            # -----------------------------------------------------------------
+            # 2. Eye Items: Keys "2" & "5" (glasses, cap, graduition)
+            # -----------------------------------------------------------------
+            elif "2" in kps and "5" in kps:
+                src1 = kps["2"]
+                src2 = kps["5"]
+                # 2: Right Eye, 5: Left Eye
+                # In FaceMesh: Landmark 33 is Right Eye outer corner, 263 is Left Eye outer corner
+                if face_lmks:
+                    re = get_lmk(face_lmks, 33)
+                    le = get_lmk(face_lmks, 263)
+                    if re and le:
+                        dst1 = (re.x * fw, re.y * fh)
+                        dst2 = (le.x * fw, le.y * fh)
+                elif pose_lmks:
+                    re = get_lmk(pose_lmks, 2)
+                    le = get_lmk(pose_lmks, 5)
+                    if re and le and (getattr(re, 'visibility', 1.0) > 0.25):
+                        dst1 = (re.x * fw, re.y * fh)
+                        dst2 = (le.x * fw, le.y * fh)
+
+            # -----------------------------------------------------------------
+            # 3. Mouth Items: Keys "9" & "10" (hair, mask)
+            # -----------------------------------------------------------------
+            elif "9" in kps and "10" in kps:
+                src1 = kps["9"]
+                src2 = kps["10"]
+                # 9: Mouth Left, 10: Mouth Right
+                # In FaceMesh: Landmark 61 is Mouth Left, 291 is Mouth Right
+                if face_lmks:
+                    ml = get_lmk(face_lmks, 61)
+                    mr = get_lmk(face_lmks, 291)
+                    if ml and mr:
+                        dst1 = (ml.x * fw, ml.y * fh)
+                        dst2 = (mr.x * fw, mr.y * fh)
+                elif pose_lmks:
+                    ml = get_lmk(pose_lmks, 9)
+                    mr = get_lmk(pose_lmks, 10)
+                    if ml and mr and (getattr(ml, 'visibility', 1.0) > 0.25):
+                        dst1 = (ml.x * fw, ml.y * fh)
+                        dst2 = (mr.x * fw, mr.y * fh)
+
+            # -----------------------------------------------------------------
+            # 4. Ear Items: Keys "7" & "8" (some caps)
+            # -----------------------------------------------------------------
+            elif "7" in kps and "8" in kps:
+                src1 = kps["7"]
+                src2 = kps["8"]
+                if face_lmks:
+                    lear = get_lmk(face_lmks, 234)
+                    rear = get_lmk(face_lmks, 454)
+                    if lear and rear:
+                        dst1 = (lear.x * fw, lear.y * fh)
+                        dst2 = (rear.x * fw, rear.y * fh)
+                elif pose_lmks:
+                    lear = get_lmk(pose_lmks, 7)
+                    rear = get_lmk(pose_lmks, 8)
+                    if lear and rear:
+                        dst1 = (lear.x * fw, lear.y * fh)
+                        dst2 = (rear.x * fw, rear.y * fh)
+
+            # -----------------------------------------------------------------
+            # Render if target landmarks were resolved on the person
+            # -----------------------------------------------------------------
+            if dst1 is not None and dst2 is not None and src1 is not None and src2 is not None:
+                # Custom suit scale & vertical shift fine-tuning applies to suits/dresses
+                scale_mult = self.suit_scale if slot in ["suite", "maried"] else 1.0
+                shift_y = self.suit_shift_y if slot in ["suite", "maried"] else 0
+                self.render_anchored_asset(frame, img, src1, src2, dst1, dst2, slot, scale_mult, shift_y)
+
+    # =========================================================================
+    # Rich Visual HUD & Spatial Shelves
+    # =========================================================================
+    def draw_glass_box(self, canvas, x, y, w, h, bg_rgba=(14, 18, 30, 210), border_bgr=(0, 229, 255), border_thick=1, radius=8):
+        x1, y1 = max(0, x), max(0, y)
+        x2, y2 = min(canvas.shape[1], x + w), min(canvas.shape[0], y + h)
+        if x1 >= x2 or y1 >= y2:
+            return
+
+        # Alpha blend background
+        overlay = canvas[y1:y2, x1:x2].copy()
+        color_bgr = np.array(bg_rgba[:3], dtype=np.float32)
+        alpha = bg_rgba[3] / 255.0
+        blended = (alpha * color_bgr + (1.0 - alpha) * overlay.astype(np.float32)).astype(np.uint8)
+        canvas[y1:y2, x1:x2] = blended
+
+        # Border
+        if border_thick > 0 and border_bgr is not None:
+            cv2.rectangle(canvas, (x1, y1), (x2, y2), border_bgr, border_thick)
+
+    def draw_spatial_hotspots(self, frame, pil_texts):
+        """
+        Interactive Spatial Hotspots projected on the 3 panorama walls.
+        CRITICAL DESIGN RULE (as requested):
+        The walls remain 100% PRISTINE, CLEAN, and FREE of boxes/rectangles.
+        Visual highlight and prompt badge ONLY appear when the user's hand cursor
+        is actively hovering over that specific item on the wall.
+        """
+        fh, fw = frame.shape[:2]
+        if self.bg_mode != "wall" or getattr(self, "bg_panorama", None) is None:
+            return
+
+        scale_x = getattr(self, "current_pano_scale_x", 1.0)
+        scale_y = getattr(self, "current_pano_scale_y", 1.0)
+        offset_x = getattr(self, "current_pano_offset_x", 0)
+
+        hc = getattr(self, "hand_cursor", None)
+        if isinstance(hc, dict) and hc.get("is_visible"):
+            hx, hy = hc.get("x", -999), hc.get("y", -999)
+            is_pinching = hc.get("is_pinching", False)
+        elif isinstance(hc, (tuple, list)) and len(hc) >= 2:
+            hx, hy = hc[0], hc[1]
+            is_pinching = getattr(self, "is_air_pinching", False)
+        else:
+            hx, hy = -999, -999
+            is_pinching = False
+
+        now = time.time()
+
+        for hs in self.spatial_hotspots:
+            # Map panorama pixel coordinates to current screen view
+            px1, py1, px2, py2 = hs["rect"]
+            sx1 = int(px1 * scale_x) - offset_x
+            sx2 = int(px2 * scale_x) - offset_x
+            sy1 = int(py1 * scale_y)
+            sy2 = int(py2 * scale_y)
+
+            # Check if this item is currently within the visible camera/screen frame
+            if sx2 < 0 or sx1 >= fw:
+                continue
+
+            # Item information
+            cur_cat = hs.get("cat")
+            cat_item = hs.get("item_obj")
+            if not cur_cat or not cat_item:
+                continue
+
+            is_worn = (self.worn_items.get(cur_cat) and self.worn_items[cur_cat].get("id") == cat_item.get("id"))
+
+            # Hover detection with hysteresis to eliminate border jitter / flickering
+            pad = 14 if hs.get("_was_hover", False) else 0
+            is_hover = (sx1 - pad <= hx <= sx2 + pad and sy1 - pad <= hy <= sy2 + pad)
+            hs["_was_hover"] = is_hover
+
+            # Fallback clickable region for mouse click
+            cur_c = cur_cat
+            cur_it = cat_item
+            self.clickable_regions.append({
+                "rect": (max(0, sx1), max(0, sy1), min(fw, sx2), min(fh, sy2)),
+                "action": lambda c=cur_c, it=cur_it: self.wear_item(c, it)
+            })
+
+            # AIR PINCH GESTURE: Grab item from wall to wear/remove it
+            if is_hover and is_pinching:
+                if (now - self.last_pinch_time) > 0.55:
+                    self.last_pinch_time = now
+                    self.wear_item(cur_c, cur_it)
+
+            # ONLY draw visual highlight when the hand is ACTUALLY HOVERING over the item on the wall!
+            # When not hovered, the wall is 100% clean and transparent!
+            if is_hover:
+                bracket_color = (0, 255, 128) if is_worn else hs["color"]
+                b_len = 20
+
+                # Soft luminous glow overlay on the hovered wall item
+                overlay = frame.copy()
+                cv2.rectangle(overlay, (max(0, sx1), max(0, sy1)), (min(fw, sx2), min(fh, sy2)), hs["color"], -1)
+                cv2.addWeighted(overlay, 0.20, frame, 0.80, 0, frame)
+
+                # Elegant corner brackets
+                cv2.line(frame, (sx1, sy1), (sx1 + b_len, sy1), bracket_color, 2, cv2.LINE_AA)
+                cv2.line(frame, (sx1, sy1), (sx1, sy1 + b_len), bracket_color, 2, cv2.LINE_AA)
+                cv2.line(frame, (sx2, sy1), (sx2 - b_len, sy1), bracket_color, 2, cv2.LINE_AA)
+                cv2.line(frame, (sx2, sy1), (sx2, sy1 + b_len), bracket_color, 2, cv2.LINE_AA)
+                cv2.line(frame, (sx1, sy2), (sx1 + b_len, sy2), bracket_color, 2, cv2.LINE_AA)
+                cv2.line(frame, (sx1, sy2), (sx1, sy2 - b_len), bracket_color, 2, cv2.LINE_AA)
+                cv2.line(frame, (sx2, sy2), (sx2 - b_len, sy2), bracket_color, 2, cv2.LINE_AA)
+                cv2.line(frame, (sx2, sy2), (sx2 - b_len, sy2), bracket_color, 2, cv2.LINE_AA)
+
+                # Floating minimal pill badge above the item
+                bw = 250
+                bh = 46
+                bx = max(10, min(fw - bw - 10, (sx1 + sx2 - bw) // 2))
+                by = max(55, sy1 - 52)
+
+                is_wearing_wedding = (self.worn_items.get("maried") is not None)
+                is_incompatible = is_wearing_wedding and (cur_cat in ["cap", "wishah", "mask"])
+
+                if is_incompatible:
+                    badge_border = (80, 80, 240)
+                    bracket_color = (80, 80, 240)
+                    prompt_txt = "غير متوافق مع فستان العرس"
+                    p_col = (140, 160, 255)
+                elif is_worn:
+                    badge_border = (0, 255, 128)
+                    bracket_color = (0, 255, 128)
+                    prompt_txt = "مرتداة ✓ - اقرص بالهواء للنزع"
+                    p_col = (0, 255, 128)
+                else:
+                    badge_border = hs["color"]
+                    bracket_color = hs["color"]
+                    prompt_txt = "اقرص بالهواء لارتدائها"
+                    p_col = (0, 229, 255)
+
+                self.draw_glass_box(frame, bx, by, bw, bh, bg_rgba=(10, 14, 26, 235), border_bgr=badge_border, border_thick=2)
+
+                item_title = hs["title"]
+                pil_texts.append((item_title, (bx + 12, by + 5), FONT_ITEM, (255, 255, 255)))
+                pil_texts.append((prompt_txt, (bx + 12, by + 24), FONT_SHELF_SUB, p_col))
+
+    def draw_rich_ui(self, frame, fps):
+        fh, fw = frame.shape[:2]
+        self.clickable_regions.clear()
+
+        # We will collect text labels to render with PIL in a single pass for high performance
+        pil_texts = []
+
+        # ---------------------------------------------------------------------
+        # 1. Top HUD Bar (Ultra-clean Arabic without broken glyphs)
+        # ---------------------------------------------------------------------
+        self.draw_glass_box(frame, 0, 0, fw, 50, bg_rgba=(12, 16, 26, 220), border_bgr=(30, 40, 60), border_thick=1)
+
+        # Pulse indicator & Title
+        cv2.circle(frame, (25, 25), 6, (0, 255, 170), -1)
+        pil_texts.append(("استوديو المراية الذكية - الغرفة ثلاثية الجدران", (42, 13), FONT_TITLE, (255, 255, 255)))
+
+        # Top Buttons (Interactive & Clickable)
+        top_btn_x = fw - 890
+        bg_btn_title = "3 جدران" if self.bg_mode == "wall" else ("عزل ضبابي" if self.bg_mode == "blur" else "كاميرا")
+        bg_btn_col = (255, 190, 0) if self.bg_mode == "wall" else ((0, 229, 255) if self.bg_mode == "blur" else (140, 140, 140))
+        top_buttons = [
+            ("إيماءات اليد" if self.enable_gestures else "معطلة", 100, lambda: self.toggle_gestures(), (0, 255, 170) if self.enable_gestures else (120, 120, 120)),
+            (bg_btn_title, 95, lambda: self.toggle_background(), bg_btn_col),
+            ("معايرة المركز (R)", 125, lambda: self.calibrate_center(), (255, 200, 0)),
+            ("الكاميرا", 80, lambda: self.toggle_camera(), (0, 229, 255)),
+            ("التقاط صورة", 90, lambda: self.save_snapshot(frame), (0, 223, 216)),
+            ("نزع الكل", 75, lambda: self.clear_all_worn(), (200, 200, 200)),
+            ("ملء الشاشة", 90, lambda: self._toggle_fs(), (200, 200, 200)),
+            ("خروج", 60, lambda: sys.exit(0), (100, 100, 255))
+        ]
+
+        for title, bw, action, b_col in top_buttons:
+            bx1, by1, bx2, by2 = top_btn_x, 9, top_btn_x + bw, 41
+            self.draw_glass_box(frame, bx1, by1, bw, 32, bg_rgba=(22, 28, 44, 210), border_bgr=b_col, border_thick=1)
+            pil_texts.append((title, (bx1 + 8, by1 + 7), FONT_BTN, (255, 255, 255)))
+            self.clickable_regions.append({"rect": (bx1, by1, bx2, by2), "action": action})
+            top_btn_x += bw + 6
+
+        # ---------------------------------------------------------------------
+        # 2. 3-Wall Virtual Room Compass & Gaze Direction Bar
+        # ---------------------------------------------------------------------
+        comp_w = 700
+        comp_h = 32
+        comp_x = (fw - comp_w) // 2
+        comp_y = 54
+        self.draw_glass_box(frame, comp_x, comp_y, comp_w, comp_h, bg_rgba=(10, 14, 24, 210), border_bgr=(40, 60, 90), border_thick=1)
+
+        # Draw compass rail track
+        cv2.line(frame, (comp_x + 20, comp_y + 16), (comp_x + comp_w - 20, comp_y + 16), (35, 50, 75), 2, cv2.LINE_AA)
+
+        # 3 Wall Tabs (Clickable to steer view)
+        wall_tabs = [
+            ("الجدار الأيسر: الأوشحة والشعر", comp_x + 10, 215, "left", -0.85, (0, 229, 255)),
+            ("الجدار الأوسط: خزانة الملابس", comp_x + 235, 230, "center", 0.0, (255, 200, 0)),
+            ("الجدار الأيمن: النظارات والقبعات", comp_x + 475, 215, "right", 0.85, (255, 0, 127))
+        ]
+
+        for w_title, wx, ww, w_key, w_yaw, w_col in wall_tabs:
+            is_active = (self.active_wall == w_key)
+            tab_bg = (24, 36, 56, 230) if is_active else (14, 18, 28, 170)
+            tab_border = w_col if is_active else (50, 65, 90)
+            tab_thick = 2 if is_active else 1
+
+            self.draw_glass_box(frame, wx, comp_y + 3, ww, comp_h - 6, bg_rgba=tab_bg, border_bgr=tab_border, border_thick=tab_thick)
+            t_col = (255, 255, 255) if is_active else (160, 180, 200)
+            pil_texts.append((w_title, (wx + 10, comp_y + 7), FONT_SHELF_SUB, t_col))
+
+            self.clickable_regions.append({
+                "rect": (wx, comp_y + 3, wx + ww, comp_y + comp_h - 3),
+                "action": lambda y=w_yaw: self.look_at_wall(y)
+            })
+
+        # Dynamic glowing indicator needle on the compass rail
+        needle_x = int(comp_x + 30 + (self.smooth_yaw + 1.0) * 0.5 * (comp_w - 60))
+        needle_y = comp_y + 16
+        cv2.circle(frame, (needle_x, needle_y), 7, (0, 255, 255), -1, cv2.LINE_AA)
+        cv2.circle(frame, (needle_x, needle_y), 9, (255, 255, 255), 1, cv2.LINE_AA)
+
+        # ---------------------------------------------------------------------
+        # 3. Interactive Spatial Hotspots (Direct Hand-to-Wall Touch & Air Pinch)
+        # 100% Clean & Invisible when not touched: only lights up when hand is near!
+        # ZERO persistent boxes, side panels, or overlay drawers!
+        # ---------------------------------------------------------------------
+        self.draw_spatial_hotspots(frame, pil_texts)
+
+        # ---------------------------------------------------------------------
+        # 4. Suit Fine-Tuning Bar (when suit, wedding dress, or graduation gown is worn)
+        # ---------------------------------------------------------------------
+        if self.worn_items.get("suite") or self.worn_items.get("maried") or self.worn_items.get("graduition"):
+            bar_w = 480
+            bar_h = 36
+            bar_x = (fw - bar_w) // 2
+            bar_y = fh - 50
+
+            self.draw_glass_box(frame, bar_x, bar_y, bar_w, bar_h, bg_rgba=(12, 16, 28, 230), border_bgr=(59, 130, 246), border_thick=1)
+            pil_texts.append(("ضبط المقاس:", (bar_x + 12, bar_y + 9), FONT_BTN, (147, 197, 253)))
+
+            # Controls: [-] [%] [+] [Up] [Down] [Reset]
+            btn_defs = [
+                ("تصغير -", 65, lambda: setattr(self, "suit_scale", max(0.6, self.suit_scale - 0.05))),
+                (f"{int(self.suit_scale*100)}%", 45, lambda: None),
+                ("تكبير +", 65, lambda: setattr(self, "suit_scale", min(1.8, self.suit_scale + 0.05))),
+                ("رفع ^", 50, lambda: setattr(self, "suit_shift_y", self.suit_shift_y - 8)),
+                ("خفض v", 50, lambda: setattr(self, "suit_shift_y", self.suit_shift_y + 8)),
+                ("إعادة ضبط", 65, lambda: (setattr(self, "suit_scale", 1.0), setattr(self, "suit_shift_y", 0)))
+            ]
+
+            bx = bar_x + 105
+            for b_txt, bw, b_act in btn_defs:
+                self.draw_glass_box(frame, bx, bar_y + 4, bw, 28, bg_rgba=(25, 35, 55, 220), border_bgr=(80, 120, 180), border_thick=1)
+                pil_texts.append((b_txt, (bx + 6, bar_y + 7), FONT_SHELF_SUB, (255, 255, 255)))
+                self.clickable_regions.append({"rect": (bx, bar_y + 4, bx + bw, bar_y + 32), "action": b_act})
+                bx += bw + 6
+
+        # ---------------------------------------------------------------------
+        # 5. Toast Notification
+        # ---------------------------------------------------------------------
+        if time.time() < self.toast_timer and self.toast_message:
+            tw = len(self.toast_message) * 14 + 50
+            tx = max(20, (fw - tw) // 2)
+            ty = 65
+            self.draw_glass_box(frame, tx, ty, tw, 40, bg_rgba=(10, 20, 36, 235), border_bgr=(0, 229, 255), border_thick=1)
+            pil_texts.append((self.toast_message, (tx + 20, ty + 10), FONT_BTN, (0, 229, 255)))
+
+        # Camera Snapshot Flash
+        if self.flash_alpha > 0.0:
+            flash_overlay = np.full_like(frame, 255)
+            cv2.addWeighted(flash_overlay, self.flash_alpha, frame, 1.0 - self.flash_alpha, 0, frame)
+            self.flash_alpha = max(0.0, self.flash_alpha - 0.15)
+
+        # ---------------------------------------------------------------------
+        # 6. Air Gesture Guidance Bar (Bottom Floating Hint)
+        # ---------------------------------------------------------------------
+        if self.enable_gestures and not (self.worn_items.get("suite") or self.worn_items.get("maried")):
+            hint_w = 740
+            hint_h = 32
+            hint_x = (fw - hint_w) // 2
+            hint_y = fh - 45
+            self.draw_glass_box(frame, hint_x, hint_y, hint_w, hint_h, bg_rgba=(10, 14, 24, 200), border_bgr=(0, 229, 255), border_thick=1)
+            hint_str = "إيماءات الجدار: اقرص بالهواء بالسبابة والإبهام عند أي قطعة لارتدائها أو نزعها مباشرة | حرّك يدك للتأشير"
+            pil_texts.append((hint_str, (hint_x + 16, hint_y + 7), FONT_SHELF_SUB, (200, 240, 255)))
+
+        # ---------------------------------------------------------------------
+        # Render All Text via PIL in Single Pass (Native Crisp Arabic)
+        # ---------------------------------------------------------------------
+        if pil_texts:
+            pil_img = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            draw = ImageDraw.Draw(pil_img)
+            for txt, pos, font, col in pil_texts:
+                ar_txt = format_ar_text(txt)
+                draw.text(pos, ar_txt, font=font, fill=(col[2], col[1], col[0]))  # BGR to RGB
+            frame[:] = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+
+    def select_drawer(self, cat_id):
+        if self.open_drawer == cat_id:
+            self.open_drawer = None
+        else:
+            self.open_drawer = cat_id
+            self.drawer_scroll_idx = 0
+
+    def _toggle_fs(self):
+        self.is_fullscreen = not self.is_fullscreen
+        prop = cv2.WINDOW_FULLSCREEN if self.is_fullscreen else cv2.WINDOW_NORMAL
+        cv2.setWindowProperty(self.window_name, cv2.WND_PROP_FULLSCREEN, prop)
+
+    # =========================================================================
+    # Hand Gestures & Skeletal Interaction System
+    # =========================================================================
+    def process_and_draw_hands(self, frame, hand_lmks_list):
+        fh, fw = frame.shape[:2]
+        now = time.time()
+
+        # Update & draw ripple click effects
+        active_ripples = []
+        for rip in self.ripples:
+            rx, ry, radius, alpha = rip
+            if alpha > 0.05 and radius < 75:
+                overlay = frame.copy()
+                cv2.circle(overlay, (int(rx), int(ry)), int(radius), (0, 255, 180), 2, cv2.LINE_AA)
+                cv2.addWeighted(overlay, alpha, frame, 1.0 - alpha, 0, frame)
+                active_ripples.append([rx, ry, radius + 4, alpha * 0.85])
+        self.ripples = active_ripples
+
+        if not hand_lmks_list or not self.enable_gestures:
+            if now - self.hand_cursor.get("last_seen", 0) > 0.5:
+                self.hand_cursor["is_visible"] = False
+            return
+
+        self.hand_cursor["last_seen"] = now
+
+        # 1. Draw Skeleton & Glowing Joints for all detected hands
+        for hand in hand_lmks_list:
+            pts = [(int(lmk.x * fw), int(lmk.y * fh)) for lmk in hand]
+
+            # Draw glowing bones
+            for i, j in HAND_CONNECTIONS:
+                if i < len(pts) and j < len(pts):
+                    p1, p2 = pts[i], pts[j]
+                    # Neon cyan glow underlayer
+                    cv2.line(frame, p1, p2, (255, 140, 0), 4, cv2.LINE_AA)
+                    # Core bright line
+                    cv2.line(frame, p1, p2, (255, 240, 200), 2, cv2.LINE_AA)
+
+            # Draw joint nodes
+            for idx, pt in enumerate(pts):
+                if idx in [4, 8, 12, 16, 20]:  # Fingertips
+                    if idx == 8:
+                        # Index tip: Highlighted in bright gold/cyan
+                        cv2.circle(frame, pt, 7, (0, 255, 255), -1, cv2.LINE_AA)
+                        cv2.circle(frame, pt, 9, (0, 200, 255), 2, cv2.LINE_AA)
+                    elif idx == 4:
+                        # Thumb tip: Bright cyan
+                        cv2.circle(frame, pt, 6, (255, 200, 0), -1, cv2.LINE_AA)
+                        cv2.circle(frame, pt, 8, (255, 255, 0), 2, cv2.LINE_AA)
+                    else:
+                        cv2.circle(frame, pt, 5, (255, 0, 180), -1, cv2.LINE_AA)
+                else:
+                    cv2.circle(frame, pt, 4, (0, 229, 255), -1, cv2.LINE_AA)
+                    cv2.circle(frame, pt, 2, (255, 255, 255), -1, cv2.LINE_AA)
+
+        # 2. Select primary interactive hand (prioritize pinching hand)
+        primary_hand = hand_lmks_list[0]
+        for hand in hand_lmks_list:
+            t = hand[4]
+            idx = hand[8]
+            d = np.hypot(t.x - idx.x, t.y - idx.y)
+            if d < 0.08:
+                primary_hand = hand
+                break
+
+        pts = [(int(lmk.x * fw), int(lmk.y * fh)) for lmk in primary_hand]
+        pt0 = pts[0]    # Wrist
+        pt4 = pts[4]    # Thumb tip
+        pt5 = pts[5]    # Index MCP
+        pt6 = pts[6]    # Index PIP
+        pt8 = pts[8]    # Index tip
+        pt9 = pts[9]    # Middle MCP
+        pt10 = pts[10]  # Middle PIP
+        pt12 = pts[12]  # Middle tip
+
+        hand_scale = max(20.0, float(np.hypot(pt0[0] - pt9[0], pt0[1] - pt9[1])))
+        pinch_dist = float(np.hypot(pt4[0] - pt8[0], pt4[1] - pt8[1]))
+        pinch_ratio = pinch_dist / hand_scale
+
+        # Gesture recognition with Schmitt-Trigger Hysteresis (prevents pinch jitter / flickering)
+        was_pinching = self.hand_cursor.get("is_pinching", False)
+        if was_pinching:
+            # Releasing pinch requires clear deliberate finger separation
+            is_pinching = (pinch_ratio < 0.35) and (pinch_dist < 54)
+        else:
+            # Engaging pinch requires clear contact / pinch
+            is_pinching = (pinch_ratio < 0.26) or (pinch_dist < 38)
+
+        # Pointing: Index extended & middle curled
+        is_pointing = (pt8[1] < pt6[1]) and (pt12[1] > pt10[1] - 8)
+
+        if is_pointing:
+            raw_cx, raw_cy = pt8[0], pt8[1]
+        else:
+            raw_cx, raw_cy = (pt4[0] + pt8[0]) // 2, (pt4[1] + pt8[1]) // 2
+
+        # Adaptive Cursor Smoothing with tremor deadband (kills hand jitter)
+        if not self.hand_cursor["is_visible"]:
+            cx, cy = raw_cx, raw_cy
+        else:
+            prev_x, prev_y = self.hand_cursor["x"], self.hand_cursor["y"]
+            move_dist = math.hypot(raw_cx - prev_x, raw_cy - prev_y)
+            if move_dist < 3.5:
+                # Sub-pixel hand tremor: lock cursor steady
+                cx, cy = prev_x, prev_y
+            elif move_dist < 22.0:
+                # Fine adjustments / hovering over items: heavy cinematic smoothing
+                cx = int(0.78 * prev_x + 0.22 * raw_cx)
+                cy = int(0.78 * prev_y + 0.22 * raw_cy)
+            else:
+                # Fast intentional hand motion: responsive tracking
+                cx = int(0.50 * prev_x + 0.50 * raw_cx)
+                cy = int(0.50 * prev_y + 0.50 * raw_cy)
+
+        self.hand_cursor["x"] = cx
+        self.hand_cursor["y"] = cy
+        self.hand_cursor["is_visible"] = True
+        self.hand_cursor["is_pointing"] = is_pointing
+        self.hand_cursor["is_pinching"] = is_pinching
+        self.hand_cursor["pinch_ratio"] = pinch_ratio
+
+        # 3. Air Pinch: Click / Grab item
+        if is_pinching and not self.prev_pinching and (now - self.last_pinch_time > 0.45):
+            self.last_pinch_time = now
+            self.ripples.append([cx, cy, 12, 1.0])
+            for reg in self.clickable_regions:
+                rx1, ry1, rx2, ry2 = reg["rect"]
+                if rx1 <= cx <= rx2 and ry1 <= cy <= ry2:
+                    reg["action"]()
+                    break
+
+        self.prev_pinching = is_pinching
+
+        # 5. Render Sci-Fi Hand Cursor HUD
+        cursor_col = (0, 255, 128) if is_pinching else ((0, 229, 255) if is_pointing else (255, 200, 0))
+        cur_radius = 12 if is_pinching else (18 if is_pointing else 16)
+
+        # Outer ring
+        cv2.circle(frame, (cx, cy), cur_radius, cursor_col, 2, cv2.LINE_AA)
+        # Inner dot
+        cv2.circle(frame, (cx, cy), 3, (255, 255, 255), -1, cv2.LINE_AA)
+        
+        # Crosshairs
+        tick_len = 7
+        cv2.line(frame, (cx - cur_radius - tick_len, cy), (cx - cur_radius + 2, cy), cursor_col, 1, cv2.LINE_AA)
+        cv2.line(frame, (cx + cur_radius - 2, cy), (cx + cur_radius + tick_len, cy), cursor_col, 1, cv2.LINE_AA)
+        cv2.line(frame, (cx, cy - cur_radius - tick_len), (cx, cy - cur_radius + 2), cursor_col, 1, cv2.LINE_AA)
+        cv2.line(frame, (cx, cy + cur_radius - 2), (cx, cy + cur_radius + tick_len), cursor_col, 1, cv2.LINE_AA)
+
+        # Indicator text / pinch visual feedback
+        if is_pinching:
+            cv2.line(frame, pt4, pt8, (0, 255, 128), 3, cv2.LINE_AA)
+            cv2.circle(frame, (cx, cy), cur_radius + 8, (0, 255, 128), 1, cv2.LINE_AA)
+            cv2.putText(frame, "PINCH / CLICK", (cx + 20, cy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 128), 1, cv2.LINE_AA)
+        elif is_pointing:
+            cv2.putText(frame, "POINT", (cx + 20, cy + 5), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 229, 255), 1, cv2.LINE_AA)
+
+    # =========================================================================
+    # Main Application Loop
+    # =========================================================================
+    def run(self):
+        cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
+        cv2.resizeWindow(self.window_name, 1280, 720)
+        cv2.setMouseCallback(self.window_name, self.on_mouse)
+
+        self.start_camera("local")
+        prev_time = time.time()
+
+        print("\n" + "=" * 70)
+        print("  VISIONCRAFT AR SMART MIRROR & 3-WALL PANORAMIC STUDIO ACTIVATED")
+        print("=" * 70)
+        print(" * الغرفة الافتراضية ثلاثية الجدران (3-Wall Panoramic Dressing Room):")
+        print("   - الجدار الأيسر: الأوشحة الملكية وتراكيب الشعر والأقنعة 🧣💇😷")
+        print("   - الجدار الأوسط: خزانة البدلات الفاخرة وفساتين المناسبات وأرواب التخرج 👔👰🎓")
+        print("   - الجدار الأيمن: رف النظارات الفاخرة والكوافي والقبعات 👓🧢")
+        print(" * تتبع دوران الرأس والعين: التفِت يميناً أو يساراً لتحريك زاوية الرؤية بسلاسة تامة")
+        print(" * [R]             معايرة وتثبيت زاوية النظر إلى المركز (Center Calibration)")
+        print(" * [B]             تبديل عزل الخلفية (الغرفة ثلاثية الجدران / عزل ضبابي / كاميرا واقعية)")
+        print(" * [G]             تشغيل / إيقاف إيماءات اليد والحركة (Air Gestures)")
+        print(" * [C]             تبديل الكاميرا (كاميرا الكمبيوتر <-> كاميرا الجوال)")
+        print(" * [1] - [8]       فتح الرفوف والانتقال المباشر إلى جدارها المخصص")
+        print(" * [S]             التقاط وحفظ صورة عالية الدقة داخل snapshots/")
+        print(" * [X]             نزع كافة الملابس والأكسسوارات المرتداة")
+        print(" * [F]             ملء الشاشة")
+        print(" * [Q] / [ESC]     إغلاق البرنامج")
+        print("=" * 70 + "\n")
+
+        while True:
+            ret, raw_frame = self.cap.read()
+            if not ret or raw_frame is None:
+                time.sleep(0.03)
+                continue
+
+            frame = cv2.flip(raw_frame, 1)
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            face_lmks = None
+            pose_lmks = None
+            hand_lmks_list = None
+
+            if HAS_MEDIAPIPE:
+                mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+
+                if self.face_landmarker:
+                    try:
+                        res = self.face_landmarker.detect(mp_img)
+                        if res and res.face_landmarks:
+                            face_lmks = res.face_landmarks[0]
+                    except Exception:
+                        pass
+
+                if self.pose_landmarker:
+                    try:
+                        res = self.pose_landmarker.detect(mp_img)
+                        if res and res.pose_landmarks:
+                            pose_lmks = res.pose_landmarks[0]
+                    except Exception:
+                        pass
+
+                if self.hand_landmarker and self.enable_gestures:
+                    try:
+                        res_h = self.hand_landmarker.detect(mp_img)
+                        if res_h and res_h.hand_landmarks:
+                            hand_lmks_list = res_h.hand_landmarks
+                    except Exception:
+                        pass
+
+                # 1. Track Continuous Head Yaw & Eye Gaze Rotation Across the 3 Walls
+                self.compute_head_and_gaze_yaw(face_lmks, frame.shape[1], frame.shape[0])
+
+                # 2. Virtual Background Replacement (3-Wall Panoramic Room / Bokeh Blur)
+                if self.bg_mode != "none":
+                    self.apply_virtual_background(frame, mp_img)
+
+            # 3. Render Worn Accessories & Clothes onto the body
+            self.render_worn_items(frame, face_lmks, pose_lmks)
+
+            # 4. Draw Rich Glassmorphic UI with 3-Wall Compass & Dynamic Shelves
+            curr_time = time.time()
+            fps = 1.0 / max(0.001, curr_time - prev_time)
+            prev_time = curr_time
+
+            if self.show_hud:
+                self.draw_rich_ui(frame, fps)
+
+            # 5. Process & Draw Hand Skeletal Tracking and Air Gestures
+            self.process_and_draw_hands(frame, hand_lmks_list)
+
+            cv2.imshow(self.window_name, frame)
+
+            key = cv2.waitKey(1) & 0xFF
+            if key in [27, ord('q'), ord('Q')]:
+                break
+            elif key in [ord('r'), ord('R')]:
+                self.calibrate_center()
+            elif key in [ord('b'), ord('B')]:
+                self.toggle_background()
+            elif key in [ord('g'), ord('G')]:
+                self.toggle_gestures()
+            elif key in [ord('c'), ord('C')]:
+                self.toggle_camera()
+            elif key in [ord('s'), ord('S')]:
+                self.save_snapshot(frame)
+            elif key in [ord('x'), ord('X')]:
+                self.clear_all_worn()
+            elif key in [ord('f'), ord('F')]:
+                self._toggle_fs()
+            elif ord('1') <= key <= ord('8'):
+                idx = key - ord('1')
+                if idx < len(self.shelf_categories):
+                    cat = self.shelf_categories[idx]
+                    self.select_drawer(cat["id"])
+                    # Pan to the designated wall
+                    if cat.get("wall") == "left":
+                        self.look_at_wall(-0.85)
+                    elif cat.get("wall") == "right":
+                        self.look_at_wall(0.85)
+                    else:
+                        self.look_at_wall(0.0)
+
+        if self.cap is not None:
+            self.cap.release()
+        cv2.destroyAllWindows()
+        print("[*] تم إغلاق استوديو الواقع المعزز بنجاح.")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="VisionCraft Standalone AR Smart Mirror & Try-On Studio (Python Native)")
+    parser.add_argument("--ipcam", type=str, default="http://192.168.8.106:8080/video", help="URL of Mobile IP Webcam Stream")
+    args = parser.parse_args()
+
+    app = ARStudioEngine(ipcam_url=args.ipcam)
+    app.run()
+
+
+if __name__ == "__main__":
+    main()

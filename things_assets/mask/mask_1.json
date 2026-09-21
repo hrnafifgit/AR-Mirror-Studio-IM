@@ -1,0 +1,19 @@
+{
+  "id": "mask_1",
+  "category": "mask",
+  "type": "mask",
+  "title": "Houndstooth Keffiyeh Shema...",
+  "url": "things_assets/mask/mask_1.png",
+  "width": 281,
+  "height": 500,
+  "keypoints": {
+    "9": [
+      0.6281,
+      0.202
+    ],
+    "10": [
+      0.3826,
+      0.215
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "id": "glasses_7",
+  "category": "glasses",
+  "type": "glasses",
+  "title": "Grandpa Glasses Transparen...",
+  "url": "things_assets/glasses/glasses_7.png",
+  "width": 735,
+  "height": 752,
+  "keypoints": {
+    "5": [
+      0.2776,
+      0.494
+    ],
+    "2": [
+      0.7116,
+      0.4947
+    ]
+  }
+}

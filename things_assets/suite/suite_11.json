@@ -1,0 +1,19 @@
+{
+  "id": "suite_11",
+  "category": "suite",
+  "type": "suit",
+  "title": "제품 실물, 남성복, 양복 일러스트 PNG, 회...",
+  "url": "things_assets/suite/suite_11.png",
+  "width": 600,
+  "height": 800,
+  "keypoints": {
+    "12": [
+      0.1133,
+      0.6256
+    ],
+    "11": [
+      0.8983,
+      0.62
+    ]
+  }
+}

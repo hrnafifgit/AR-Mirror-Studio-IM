@@ -1,0 +1,19 @@
+{
+  "id": "suite_10",
+  "category": "suite",
+  "type": "suit",
+  "title": "finishing suit men bg remo...",
+  "url": "things_assets/suite/suite_10.png",
+  "width": 736,
+  "height": 736,
+  "keypoints": {
+    "11": [
+      0.6692,
+      0.3852
+    ],
+    "12": [
+      0.2561,
+      0.4171
+    ]
+  }
+}

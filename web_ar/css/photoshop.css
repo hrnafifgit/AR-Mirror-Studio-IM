@@ -1,0 +1,1031 @@
+:root {
+    --ps-bg-main: #1e1e1e;
+    --ps-bg-panel: #282828;
+    --ps-bg-panel-dark: #222222;
+    --ps-bg-canvas: #161616;
+    --ps-border: #383838;
+    --ps-border-light: #484848;
+    --ps-accent-blue: #1473e6;
+    --ps-accent-hover: #2680eb;
+    --ps-text-main: #d5d5d5;
+    --ps-text-dim: #999999;
+    --ps-text-muted: #6e6e6e;
+    --ps-input-bg: #141414;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+    user-select: none;
+}
+
+body {
+    background-color: var(--ps-bg-main);
+    color: var(--ps-text-main);
+    height: 100vh;
+    width: 100vw;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    font-size: 11px;
+}
+
+/* 1. TOP MENU BAR */
+.ps-menubar {
+    height: 28px;
+    background: #252525;
+    border-bottom: 1px solid #181818;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 8px;
+    font-size: 11px;
+    z-index: 100;
+}
+.ps-menu-left {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+.ps-icon-badge {
+    width: 22px;
+    height: 22px;
+    background: #10141d;
+    border: 1px solid rgba(255, 193, 7, 0.45);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 8px;
+    overflow: hidden;
+    cursor: pointer;
+    box-shadow: 0 0 8px rgba(255, 193, 7, 0.25);
+    transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+.ps-icon-badge:hover {
+    transform: scale(1.12);
+    box-shadow: 0 0 12px rgba(255, 193, 7, 0.6);
+    border-color: #ffc107;
+}
+.ps-icon-badge img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+
+/* Dropdown Menu System */
+.ps-menu-dropdown {
+    position: relative;
+}
+.ps-menu-item {
+    padding: 4px 8px;
+    color: var(--ps-text-main);
+    cursor: pointer;
+    border-radius: 2px;
+    display: inline-block;
+}
+.ps-menu-item:hover, .ps-menu-dropdown.active .ps-menu-item {
+    background: #383838;
+    color: #ffffff;
+}
+.ps-dropdown-content {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background: #252525;
+    border: 1px solid #3a3a3a;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.7);
+    min-width: 210px;
+    z-index: 1000;
+    padding: 4px 0;
+}
+.ps-menu-dropdown:hover .ps-dropdown-content {
+    display: block;
+}
+.ps-dropdown-item {
+    padding: 6px 16px;
+    color: #cccccc;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.ps-dropdown-item:hover {
+    background: var(--ps-accent-blue);
+    color: #ffffff;
+}
+.ps-dropdown-separator {
+    height: 1px;
+    background: #383838;
+    margin: 4px 0;
+}
+
+.ps-menu-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.ps-workspace-select {
+    background: #1e1e1e;
+    border: 1px solid var(--ps-border);
+    color: var(--ps-text-main);
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 11px;
+}
+
+/* 2. OPTIONS BAR */
+.ps-optionsbar {
+    height: 32px;
+    background: var(--ps-bg-panel);
+    border-bottom: 1px solid #1a1a1a;
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    gap: 14px;
+    color: var(--ps-text-dim);
+    z-index: 10;
+}
+.ps-tool-active-icon {
+    color: #ffffff;
+    font-weight: bold;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.ps-opt-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.ps-input {
+    background: var(--ps-input-bg);
+    border: 1px solid var(--ps-border);
+    color: #ffffff;
+    padding: 2px 6px;
+    border-radius: 2px;
+    font-size: 11px;
+    outline: none;
+}
+.ps-input-num {
+    width: 48px;
+    text-align: center;
+    font-family: 'Fira Code', monospace;
+}
+.ps-select {
+    background: var(--ps-input-bg);
+    border: 1px solid var(--ps-border);
+    color: #ffffff;
+    padding: 2px 6px;
+    border-radius: 2px;
+    font-size: 11px;
+}
+.ps-btn {
+    background: #383838;
+    border: 1px solid #4a4a4a;
+    color: #ffffff;
+    padding: 3px 10px;
+    border-radius: 2px;
+    cursor: pointer;
+    font-size: 11px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.ps-btn:hover {
+    background: #484848;
+}
+.ps-btn-accent {
+    background: var(--ps-accent-blue);
+    border: 1px solid var(--ps-accent-hover);
+}
+.ps-btn-accent:hover {
+    background: var(--ps-accent-hover);
+}
+
+/* 3. MAIN WORKSPACE */
+.ps-workspace {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    background: var(--ps-bg-main);
+}
+
+/* LEFT TOOLBAR & FLYOUT MENUS */
+.ps-toolbar {
+    width: 38px;
+    background: var(--ps-bg-panel);
+    border-right: 1px solid #1a1a1a;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 6px 0;
+    gap: 2px;
+    z-index: 50;
+}
+.ps-tool-group {
+    position: relative;
+    width: 28px;
+    height: 28px;
+}
+.ps-tbtn {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--ps-text-dim);
+    cursor: pointer;
+    border-radius: 3px;
+    position: relative;
+    border: 1px solid transparent;
+}
+.ps-tbtn:hover {
+    background: #3a3a3a;
+    color: #ffffff;
+}
+.ps-tbtn.active {
+    background: #444444;
+    color: #ffffff;
+    border-color: #5a5a5a;
+}
+.ps-tbtn svg {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
+}
+/* Photoshop Flyout Arrow Triangle */
+.ps-tbtn.has-flyout::after {
+    content: '';
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    border-bottom: 4px solid #888888;
+    border-left: 4px solid transparent;
+    pointer-events: none;
+}
+.ps-tbtn.active.has-flyout::after {
+    border-bottom-color: #ffffff;
+}
+
+/* Photoshop Flyout Popup Menu */
+.ps-tool-flyout {
+    display: none;
+    position: absolute;
+    left: 36px;
+    top: 0;
+    background: #252525;
+    border: 1px solid #3d3d3d;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.85);
+    border-radius: 3px;
+    min-width: 240px;
+    z-index: 2000;
+    padding: 4px 0;
+}
+.ps-tool-group.open .ps-tool-flyout {
+    display: block;
+}
+.ps-flyout-header {
+    padding: 4px 12px;
+    font-size: 9.5px;
+    font-weight: 700;
+    color: #888888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid #333333;
+    margin-bottom: 3px;
+}
+.ps-flyout-item {
+    padding: 6px 12px;
+    color: #cccccc;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 11px;
+    transition: background 0.1s;
+}
+.ps-flyout-item:hover {
+    background: var(--ps-accent-blue);
+    color: #ffffff;
+}
+.ps-flyout-item.selected {
+    background: rgba(20, 115, 230, 0.25);
+    color: #ffffff;
+    font-weight: 600;
+}
+.ps-flyout-item-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.ps-flyout-item-badge {
+    font-size: 9px;
+    color: #888888;
+    font-family: 'Fira Code', monospace;
+}
+.ps-flyout-item:hover .ps-flyout-item-badge {
+    color: #e0f2fe;
+}
+.ps-tsep {
+    width: 22px;
+    height: 1px;
+    background: var(--ps-border);
+    margin: 4px 0;
+}
+.ps-colors {
+    margin-top: auto;
+    position: relative;
+    width: 26px;
+    height: 26px;
+    margin-bottom: 8px;
+}
+.ps-fg-color {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 17px;
+    height: 17px;
+    background: #00e5ff;
+    border: 1px solid #ffffff;
+    z-index: 2;
+    cursor: pointer;
+}
+.ps-bg-color {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    width: 17px;
+    height: 17px;
+    background: #000000;
+    border: 1px solid #666;
+    cursor: pointer;
+}
+
+/* DOCUMENT TAB AND CANVAS */
+.ps-canvas-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--ps-bg-canvas);
+    overflow: hidden;
+    position: relative;
+}
+
+.ps-doc-tabs {
+    height: 26px;
+    background: #181818;
+    display: flex;
+    align-items: flex-end;
+    padding-left: 8px;
+    border-bottom: 1px solid #141414;
+}
+.ps-tab {
+    height: 25px;
+    background: #282828;
+    color: #ffffff;
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-radius: 4px 4px 0 0;
+    border: 1px solid #333333;
+    border-bottom: none;
+    font-size: 11px;
+}
+.ps-tab-close {
+    color: #888;
+    cursor: pointer;
+    font-size: 12px;
+    margin-left: 4px;
+}
+.ps-tab-close:hover {
+    color: #fff;
+}
+
+/* Canvas Stage with Rulers */
+.ps-stage-wrapper {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 20px 1fr;
+    grid-template-rows: 20px 1fr;
+    background: #191919;
+    overflow: hidden;
+    position: relative;
+}
+.ps-ruler-corner {
+    background: #222222;
+    border-bottom: 1px solid #333;
+    border-right: 1px solid #333;
+}
+.ps-ruler-h {
+    background: #222222;
+    border-bottom: 1px solid #333;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    align-items: flex-end;
+    padding-left: 30px;
+    color: #777;
+    font-size: 8.5px;
+    font-family: 'Fira Code', monospace;
+}
+.ps-ruler-ticks-h {
+    display: flex;
+    gap: 60px;
+}
+.ps-ruler-v {
+    background: #222222;
+    border-right: 1px solid #333;
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding-top: 30px;
+    gap: 60px;
+    align-items: center;
+    color: #777;
+    font-size: 8.5px;
+    font-family: 'Fira Code', monospace;
+}
+
+.ps-viewport {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    user-select: none;
+    touch-action: none;
+    background-image: 
+        linear-gradient(45deg, #1c1c1c 25%, transparent 25%), 
+        linear-gradient(-45deg, #1c1c1c 25%, transparent 25%), 
+        linear-gradient(45deg, transparent 75%, #1c1c1c 75%), 
+        linear-gradient(-45deg, transparent 75%, #1c1c1c 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
+}
+.ps-viewport.panning {
+    cursor: grab !important;
+}
+.ps-viewport.panning.dragging {
+    cursor: grabbing !important;
+}
+
+/* Document Frame in Canvas - Strictly 1:1 Pixel-Aligned */
+.ps-document-frame {
+    background: #000000;
+    box-shadow: 0 0 35px rgba(0,0,0,0.95), 0 0 0 1px #383838;
+    position: relative;
+    display: inline-block;
+    line-height: 0;
+    font-size: 0;
+    transform-origin: center center;
+    will-change: transform;
+}
+#mainCanvasRaw {
+    display: block;
+    max-width: calc(100vw - 420px);
+    max-height: calc(100vh - 160px);
+    width: auto;
+    height: auto;
+}
+#mainCanvasProcessed {
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    max-width: none;
+    max-height: none;
+    object-fit: fill;
+    clip-path: polygon(50% 0, 100% 0, 100% 100%, 50% 100%);
+    pointer-events: none;
+    transition: clip-path 0.04s ease-out;
+}
+
+/* Split Compare Line in Canvas */
+.ps-split-bar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 2px;
+    background: #00e5ff;
+    box-shadow: 0 0 10px #00e5ff;
+    z-index: 10;
+    cursor: ew-resize;
+}
+.ps-split-knob {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 28px;
+    height: 28px;
+    background: #262626;
+    border: 2px solid #00e5ff;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #00e5ff;
+    font-size: 10px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.8);
+    z-index: 11;
+    cursor: ew-resize;
+}
+
+/* HUD Loupe at cursor */
+.ps-hud-loupe {
+    position: absolute;
+    bottom: 15px;
+    left: 15px;
+    background: rgba(20,20,20,0.94);
+    border: 1px solid #1473e6;
+    padding: 8px 12px;
+    border-radius: 3px;
+    display: flex;
+    gap: 12px;
+    font-family: 'Fira Code', monospace;
+    font-size: 10px;
+    box-shadow: 0 8px 20px rgba(0,0,0,0.7);
+    z-index: 20;
+}
+
+/* Bottom Status Info */
+.ps-doc-status {
+    height: 22px;
+    background: #252525;
+    border-top: 1px solid #1a1a1a;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 10px;
+    font-size: 10px;
+    color: #888888;
+}
+
+/* 4. RIGHT PANELS DOCK */
+.ps-dock {
+    width: 340px;
+    background: var(--ps-bg-panel);
+    border-left: 1px solid #1a1a1a;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.ps-panel-group {
+    display: flex;
+    flex-direction: column;
+    border-bottom: 1px solid #1a1a1a;
+}
+.ps-panel-tabs {
+    height: 26px;
+    background: #202020;
+    display: flex;
+    align-items: center;
+    padding: 0 6px;
+    gap: 2px;
+    border-bottom: 1px solid #181818;
+}
+.ps-ptab {
+    padding: 4px 10px;
+    color: #888888;
+    cursor: pointer;
+    border-radius: 2px;
+    font-size: 11px;
+}
+.ps-ptab.active {
+    background: var(--ps-bg-panel);
+    color: #ffffff;
+    font-weight: 600;
+}
+.ps-panel-body {
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* Histogram in Photoshop */
+.ps-hist-graph {
+    height: 85px;
+    background: #141414;
+    border: 1px solid #333333;
+    border-radius: 2px;
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    padding: 2px;
+    gap: 1px;
+}
+.ps-hist-bar {
+    flex: 1;
+    background: #00e5ff;
+    opacity: 0.85;
+}
+.ps-hist-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 12px;
+    font-size: 10px;
+    color: #999999;
+}
+.ps-hstat-val {
+    color: #ffffff;
+    font-family: 'Fira Code', monospace;
+}
+
+/* Adjustments & Properties */
+.ps-prop-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    color: #aaaaaa;
+}
+.ps-range {
+    width: 160px;
+    height: 3px;
+    accent-color: var(--ps-accent-blue);
+    background: #151515;
+    cursor: pointer;
+}
+
+/* LAYERS PANEL */
+.ps-layers-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--ps-bg-panel);
+    overflow: hidden;
+}
+.ps-layer-controls-top {
+    padding: 6px 10px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid #202020;
+    font-size: 11px;
+}
+.ps-layers-stack {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    background: #222222;
+    padding: 4px;
+}
+.ps-layer-row {
+    height: 40px;
+    background: #2a2a2a;
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    gap: 8px;
+    cursor: pointer;
+    border-bottom: 1px solid #1f1f1f;
+    border-radius: 3px;
+}
+.ps-layer-row.selected {
+    background: #383838;
+    border: 1px solid #1473e6;
+}
+.ps-layer-eye {
+    color: #999;
+    font-size: 12px;
+    width: 14px;
+    text-align: center;
+    cursor: pointer;
+}
+.ps-layer-eye.active {
+    color: #ffffff;
+}
+.ps-layer-thumb {
+    width: 38px;
+    height: 28px;
+    background: #000;
+    border: 1px solid #444;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 2px;
+}
+.ps-layer-title {
+    flex: 1;
+    color: #ffffff;
+    font-size: 11px;
+}
+.ps-layer-badge {
+    font-size: 9px;
+    background: #1b3858;
+    color: #4da3ff;
+    padding: 1px 5px;
+    border-radius: 2px;
+    border: 1px solid #225a94;
+}
+.ps-layers-footer {
+    height: 28px;
+    background: #202020;
+    border-top: 1px solid #181818;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding: 0 10px;
+    gap: 12px;
+    color: #888888;
+}
+.ps-footer-icon {
+    cursor: pointer;
+    font-size: 12px;
+}
+.ps-footer-icon:hover {
+    color: #ffffff;
+}
+
+/* ==========================================================================
+   SUPERPOWER FEATURES CSS: BRUSH, LOUPE 7X7, PALETTE, BLEND MODES, NOTCH
+   ========================================================================== */
+
+/* 1. Selective Processing Brush Cursor */
+#brushCursor {
+    position: absolute;
+    pointer-events: none;
+    border: 1.5px solid rgba(0, 229, 255, 0.9);
+    border-radius: 50%;
+    transform: translate(-50%, -50%);
+    box-shadow: 0 0 8px rgba(0, 229, 255, 0.4), inset 0 0 4px rgba(0, 229, 255, 0.2);
+    display: none;
+    z-index: 100;
+}
+
+#brushMaskCanvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 8;
+    display: none;
+}
+
+/* 2. 7x7 Pixel Matrix Loupe Floating HUD */
+.ps-matrix-loupe {
+    position: absolute;
+    top: 15px;
+    right: 15px;
+    background: rgba(18, 18, 18, 0.96);
+    border: 1px solid #00e5ff;
+    border-radius: 6px;
+    padding: 10px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.85);
+    z-index: 50;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    backdrop-filter: blur(8px);
+    font-family: 'Fira Code', monospace;
+    font-size: 9px;
+    user-select: none;
+    min-width: 210px;
+}
+.ps-matrix-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #333;
+    padding-bottom: 4px;
+    color: #00e5ff;
+    font-weight: 600;
+}
+.ps-matrix-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 24px);
+    grid-template-rows: repeat(7, 24px);
+    gap: 2px;
+    background: #111;
+    padding: 3px;
+    border-radius: 4px;
+    border: 1px solid #222;
+}
+.ps-matrix-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 7.5px;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 1px 2px #000, 0 0 3px #000;
+    border-radius: 2px;
+    border: 1px solid rgba(255,255,255,0.08);
+}
+.ps-matrix-cell.center {
+    border: 1.5px solid #00e5ff !important;
+    box-shadow: 0 0 6px #00e5ff;
+    font-weight: 900;
+}
+.ps-matrix-stats {
+    display: flex;
+    justify-content: space-between;
+    color: #aaa;
+    font-size: 9.5px;
+}
+
+/* 3. Color Palette Swatches */
+.ps-palette-dock {
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    background: #1c1c1c;
+    border-top: 1px solid #282828;
+}
+.ps-palette-list {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.ps-palette-chip {
+    width: 38px;
+    height: 24px;
+    border-radius: 3px;
+    border: 1px solid #444;
+    cursor: pointer;
+    position: relative;
+    transition: transform 0.15s, border-color 0.15s;
+}
+.ps-palette-chip:hover {
+    transform: scale(1.15);
+    border-color: #00e5ff;
+    z-index: 5;
+}
+.ps-palette-chip::after {
+    content: attr(data-hex);
+    position: absolute;
+    bottom: -18px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #000;
+    color: #fff;
+    font-size: 8px;
+    padding: 1px 4px;
+    border-radius: 2px;
+    white-space: nowrap;
+    display: none;
+    font-family: 'Fira Code', monospace;
+}
+.ps-palette-chip:hover::after {
+    display: block;
+}
+
+/* 4. Interactive FFT Notch Modal */
+.ps-notch-modal {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: #1e1e1e;
+    border: 1px solid #00e5ff;
+    border-radius: 6px;
+    padding: 14px;
+    box-shadow: 0 15px 40px rgba(0,0,0,0.9);
+    z-index: 1000;
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+}
+.ps-notch-canvas-wrap {
+    position: relative;
+    border: 1px solid #444;
+    cursor: crosshair;
+    line-height: 0;
+}
+
+/* 5. Photoshop On-Screen Toast HUD Notification */
+.ps-hud-toast {
+    position: fixed;
+    top: 70px;
+    left: 50%;
+    transform: translateX(-50%) translateY(-10px);
+    background: rgba(15, 15, 15, 0.92);
+    border: 1px solid #00e5ff;
+    color: #ffffff;
+    padding: 6px 18px;
+    border-radius: 20px;
+    font-family: 'Segoe UI', -apple-system, sans-serif;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.8), 0 0 10px rgba(0,229,255,0.3);
+    z-index: 9999;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.ps-hud-toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+/* 6. Shortcuts Cheatsheet Modal */
+.ps-modal-backdrop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: rgba(0,0,0,0.75);
+    backdrop-filter: blur(4px);
+    z-index: 10000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+.ps-shortcuts-modal {
+    width: 580px;
+    max-height: 85vh;
+    background: #1e1e1e;
+    border: 1px solid #333;
+    border-radius: 8px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.9);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.ps-shortcuts-header {
+    padding: 12px 16px;
+    background: #252525;
+    border-bottom: 1px solid #333;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: #fff;
+}
+.ps-shortcuts-body {
+    padding: 16px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+.ps-shortcut-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.ps-shortcut-title {
+    color: #00e5ff;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid #2a2a2a;
+    padding-bottom: 3px;
+}
+.ps-shortcut-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 11px;
+    color: #ccc;
+    padding: 2px 0;
+}
+.ps-kbd {
+    background: #2b2b2b;
+    border: 1px solid #484848;
+    border-bottom: 2px solid #333;
+    color: #00e5ff;
+    font-family: 'Fira Code', monospace;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 3px;
+    display: inline-block;
+    min-width: 22px;
+    text-align: center;
+}
+
+/* 7. Tab Zen Mode (Distraction-Free Canvas) */
+body.zen-mode .ps-toolbar,
+body.zen-mode .ps-dock,
+body.zen-mode .ps-optionsbar,
+body.zen-mode .ps-menubar {
+    display: none !important;
+}
+
+

@@ -1,0 +1,19 @@
+{
+  "id": "glasses_1",
+  "category": "glasses",
+  "type": "glasses",
+  "title": "نظارة أنيقة #1",
+  "url": "things_assets/glasses/glasses_1.png",
+  "width": 736,
+  "height": 980,
+  "keypoints": {
+    "5": [
+      0.25,
+      0.548
+    ],
+    "2": [
+      0.6963,
+      0.552
+    ]
+  }
+}

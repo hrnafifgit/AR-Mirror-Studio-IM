@@ -1,0 +1,19 @@
+{
+  "id": "glasses_6",
+  "category": "glasses",
+  "type": "glasses",
+  "title": "Goggles Aviator Sunglasses...",
+  "url": "things_assets/glasses/glasses_6.png",
+  "width": 728,
+  "height": 724,
+  "keypoints": {
+    "2": [
+      0.7266,
+      0.4296
+    ],
+    "5": [
+      0.2761,
+      0.4323
+    ]
+  }
+}
