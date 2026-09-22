@@ -26,13 +26,28 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-# Audio playback support via sounddevice & scipy
+# Audio playback support via sounddevice, soundfile & scipy
+HAS_AUDIO = False
+HAS_SOUNDFILE = False
+HAS_WAVFILE = False
+
 try:
     import sounddevice as sd
-    from scipy.io import wavfile
     HAS_AUDIO = True
 except ImportError:
-    HAS_AUDIO = False
+    pass
+
+try:
+    import soundfile as sf
+    HAS_SOUNDFILE = True
+except ImportError:
+    pass
+
+try:
+    from scipy.io import wavfile
+    HAS_WAVFILE = True
+except ImportError:
+    pass
 
 # Arabic text shaping
 try:
@@ -147,18 +162,37 @@ class ARAudioManager:
         self.tracks = []
         if not self.sounds_dir.exists():
             return
-        wav_files = sorted(list(self.sounds_dir.glob("*.wav")))
+
+        supported_exts = ["*.wav", "*.mp3", "*.ogg", "*.flac"]
+        audio_files = []
+        seen = set()
+        for ext in supported_exts:
+            for f in sorted(list(self.sounds_dir.glob(ext))):
+                if f.name.lower() not in seen:
+                    seen.add(f.name.lower())
+                    audio_files.append(f)
+
         meta = {
             "luxury_lounge.wav": {"title": "بوتيك فاخر (Luxury Lounge)", "icon": "🎻"},
             "oriental_oud.wav": {"title": "عود شرقي أصيل (Oriental Oud)", "icon": "🪕"},
             "wedding_melody.wav": {"title": "نغمات الزفاف (Wedding Melody)", "icon": "🎹"},
-            "fashion_beats.wav": {"title": "إيقاع عرض الأزياء (Runway Beats)", "icon": "🎧"}
+            "fashion_beats.wav": {"title": "إيقاع عرض الأزياء (Runway Beats)", "icon": "🎧"},
+            "زفة الأنصار_فرقة أنصارالله.mp3": {"title": "زفة الأنصار (فرقة أنصارالله)", "icon": "🎉"}
         }
-        for f in wav_files:
-            m = meta.get(f.name, {"title": f.stem.replace("_", " ").title(), "icon": "🎵"})
+
+        for f in audio_files:
+            fname = f.name
+            fstem = f.stem
+            if fname in meta:
+                m = meta[fname]
+            elif "زفة" in fname or "zaffa" in fname.lower() or "أنصار" in fname:
+                m = {"title": "زفة الأنصار (فرقة أنصارالله)" if "أنصار" in fname else f"زفة: {fstem.replace('_', ' ')}", "icon": "🎉"}
+            else:
+                m = {"title": fstem.replace("_", " ").title(), "icon": "🎵"}
+
             self.tracks.append({
                 "path": f,
-                "name": f.name,
+                "name": fname,
                 "title": m["title"],
                 "icon": m["icon"]
             })
@@ -204,13 +238,20 @@ class ARAudioManager:
         self.active_track_icon = track["icon"]
 
         try:
-            sr, data = wavfile.read(str(track["path"]))
-            if data.dtype == np.int16:
-                data = data.astype(np.float32) / 32768.0
-            elif data.dtype == np.int32:
-                data = data.astype(np.float32) / 2147483648.0
-            elif data.dtype == np.uint8:
-                data = (data.astype(np.float32) - 128.0) / 128.0
+            p_str = str(track["path"])
+            if HAS_SOUNDFILE:
+                data, sr = sf.read(p_str, dtype="float32")
+            elif HAS_WAVFILE and p_str.lower().endswith(".wav"):
+                sr, data = wavfile.read(p_str)
+                if data.dtype == np.int16:
+                    data = data.astype(np.float32) / 32768.0
+                elif data.dtype == np.int32:
+                    data = data.astype(np.float32) / 2147483648.0
+                elif data.dtype == np.uint8:
+                    data = (data.astype(np.float32) - 128.0) / 128.0
+            else:
+                print(f"[!] Unable to play {track['name']}: soundfile library required for this format.")
+                return
 
             with self.lock:
                 self.audio_data = data
@@ -1543,15 +1584,15 @@ class ARStudioEngine:
         # 7. Holographic Floating Audio Carousel (Activated via Open Palm)
         # ---------------------------------------------------------------------
         if self.show_audio_menu and self.audio_manager.tracks:
-            c_w = 880
+            num_tracks = len(self.audio_manager.tracks)
+            c_w = min(fw - 60, max(880, num_tracks * 195 + 40))
             c_h = 115
             c_x = (fw - c_w) // 2
             c_y = fh - 145
             self.draw_glass_box(frame, c_x, c_y, c_w, c_h, bg_rgba=(12, 18, 34, 245), border_bgr=(0, 229, 255), border_thick=2)
             pil_texts.append(("🎵 قائمة المقاطع الصوتية (التفت برأسك للاختيار | افتح كفك للتشغيل والإغلاق 🖐️)", (c_x + 22, c_y + 8), FONT_SHELF_TITLE, (0, 229, 255)))
 
-            num_tracks = len(self.audio_manager.tracks)
-            card_w = (c_w - 40 - (num_tracks - 1) * 12) // num_tracks
+            card_w = (c_w - 40 - (num_tracks - 1) * 10) // num_tracks
             card_h = 64
             card_y = c_y + 38
 
