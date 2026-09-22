@@ -177,7 +177,9 @@ class ARAudioManager:
             "oriental_oud.wav": {"title": "عود شرقي أصيل (Oriental Oud)", "icon": "🪕"},
             "wedding_melody.wav": {"title": "نغمات الزفاف (Wedding Melody)", "icon": "🎹"},
             "fashion_beats.wav": {"title": "إيقاع عرض الأزياء (Runway Beats)", "icon": "🎧"},
-            "زفة الأنصار_فرقة أنصارالله.mp3": {"title": "زفة الأنصار (فرقة أنصارالله)", "icon": "🎉"}
+            "زفة الأنصار_فرقة أنصارالله.mp3": {"title": "زفة الأنصار (فرقة أنصارالله)", "icon": "🎉"},
+            "لن نترك فلسطين - عيسى الليث 1446هـ.mp3": {"title": "لن نترك فلسطين (عيسى الليث)", "icon": "🇵🇸"},
+            "Humood - Mistanneek.mp3": {"title": "مستنيك (حمود الخضر)", "icon": "✨"}
         }
 
         for f in audio_files:
@@ -185,6 +187,10 @@ class ARAudioManager:
             fstem = f.stem
             if fname in meta:
                 m = meta[fname]
+            elif "فلسطين" in fname or "الليث" in fname:
+                m = {"title": "لن نترك فلسطين (عيسى الليث)", "icon": "🇵🇸"}
+            elif "مستنيك" in fname or "mistanneek" in fname.lower() or "humood" in fname.lower():
+                m = {"title": "مستنيك (حمود الخضر)", "icon": "✨"}
             elif "زفة" in fname or "zaffa" in fname.lower() or "أنصار" in fname:
                 m = {"title": "زفة الأنصار (فرقة أنصارالله)" if "أنصار" in fname else f"زفة: {fstem.replace('_', ' ')}", "icon": "🎉"}
             else:
@@ -1585,19 +1591,20 @@ class ARStudioEngine:
         # ---------------------------------------------------------------------
         if self.show_audio_menu and self.audio_manager.tracks:
             num_tracks = len(self.audio_manager.tracks)
-            c_w = min(fw - 60, max(880, num_tracks * 195 + 40))
+            c_w = min(fw - 40, max(880, num_tracks * 145 + 50))
             c_h = 115
             c_x = (fw - c_w) // 2
             c_y = fh - 145
             self.draw_glass_box(frame, c_x, c_y, c_w, c_h, bg_rgba=(12, 18, 34, 245), border_bgr=(0, 229, 255), border_thick=2)
             pil_texts.append(("🎵 قائمة المقاطع الصوتية (التفت برأسك للاختيار | افتح كفك للتشغيل والإغلاق 🖐️)", (c_x + 22, c_y + 8), FONT_SHELF_TITLE, (0, 229, 255)))
 
-            card_w = (c_w - 40 - (num_tracks - 1) * 10) // num_tracks
+            card_gap = 8 if num_tracks > 5 else 12
+            card_w = (c_w - 40 - (num_tracks - 1) * card_gap) // num_tracks
             card_h = 64
             card_y = c_y + 38
 
             for idx, trk in enumerate(self.audio_manager.tracks):
-                card_x = c_x + 20 + idx * (card_w + 12)
+                card_x = c_x + 20 + idx * (card_w + card_gap)
                 is_selected = (idx == self.selected_sound_idx)
                 is_playing_this = (self.audio_manager.is_playing and self.audio_manager.current_track_idx == idx)
 
